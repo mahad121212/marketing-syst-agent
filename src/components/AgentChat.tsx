@@ -1,11 +1,24 @@
 import React, { useState } from 'react';
-import { Send, Bot, User, Sparkles, CheckCircle2, AlertCircle, Wrench, ChevronDown, ChevronRight, Play, Plus, MessageSquare, Trash2 } from 'lucide-react';
+import { Send, Bot, User, Sparkles, CheckCircle2, AlertCircle, Wrench, ChevronDown, ChevronRight, Play, Plus, MessageSquare, Trash2, Clock, Target, X, Calendar, Eye } from 'lucide-react';
 import { AgentMessage } from '../types';
+import { supabase } from '../lib/supabase';
 
 interface ChatSession {
   id: string;
   title: string;
   updated_at: string;
+  last_viewed_at?: string;
+}
+
+interface GoalSchedule {
+  id: string;
+  target_id: string;
+  target_level: string;
+  goal_description: string;
+  metrics_snapshot: any;
+  next_run_at: string;
+  status: string;
+  created_at: string;
 }
 
 interface AgentChatProps {
@@ -33,6 +46,8 @@ export const AgentChat: React.FC<AgentChatProps> = ({
 }) => {
   const [inputText, setInputText] = useState('');
   const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({});
+  const [showGoalLibrary, setShowGoalLibrary] = useState(false);
+  const [goalSchedules, setGoalSchedules] = useState<GoalSchedule[]>([]);
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,6 +58,32 @@ export const AgentChat: React.FC<AgentChatProps> = ({
 
   const toggleThoughts = (id: string) => {
     setExpandedThoughts((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  // Load goal schedules for the current session
+  const loadGoalSchedules = async () => {
+    if (!currentSessionId) return;
+    const { data } = await supabase
+      .from('goal_schedules')
+      .select('*')
+      .eq('session_id', currentSessionId)
+      .order('created_at', { ascending: false });
+    if (data) setGoalSchedules(data);
+  };
+
+  // Reload goals whenever session changes
+  React.useEffect(() => {
+    if (currentSessionId) loadGoalSchedules();
+  }, [currentSessionId, messages]);
+
+  const handleApproveGoal = async (goalId: string) => {
+    await supabase.from('goal_schedules').update({ status: 'ACTIVE' }).eq('id', goalId);
+    loadGoalSchedules();
+  };
+
+  const handleCancelGoal = async (goalId: string) => {
+    await supabase.from('goal_schedules').update({ status: 'CANCELLED' }).eq('id', goalId);
+    loadGoalSchedules();
   };
 
   const formatSessionDate = (dateStr: string) => {
@@ -133,8 +174,11 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                   if (!isActive) e.currentTarget.style.backgroundColor = 'transparent';
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1, position: 'relative' }}>
                   <MessageSquare style={{ width: '14px', height: '14px', color: isActive ? '#38bdf8' : '#4b5563', flexShrink: 0 }} />
+                  {(!s.last_viewed_at || new Date(s.updated_at).getTime() > new Date(s.last_viewed_at).getTime() + 1000) && !isActive && (
+                    <span style={{ position: 'absolute', top: '-4px', left: '-4px', width: '8px', height: '8px', backgroundColor: '#ef4444', borderRadius: '50%', border: '2px solid #0a0f1a' }} />
+                  )}
                   <div style={{ minWidth: 0 }}>
                     <div style={{
                       fontSize: '13px',
@@ -143,7 +187,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                       whiteSpace: 'nowrap',
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
-                      maxWidth: '140px',
+                      maxWidth: '120px',
                     }}>
                       {s.title}
                     </div>
@@ -198,9 +242,25 @@ export const AgentChat: React.FC<AgentChatProps> = ({
               Meta Agentic Reasoner v2.0 &bull; Broad Search & ROAS Optimizer
             </span>
           </div>
-          <span style={{ fontSize: '12px', color: '#6b7280' }}>
-            Model: Gemini 3.6 Flash (Low) &bull; Supabase Tools Active
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span style={{ fontSize: '12px', color: '#6b7280' }}>
+              Model: Gemini 3.6 Flash (Low) &bull; Supabase Tools Active
+            </span>
+            {/* Goal Library Button */}
+            <button
+              onClick={() => { setShowGoalLibrary(!showGoalLibrary); loadGoalSchedules(); }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '6px',
+                padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
+                border: '1px solid rgba(139, 92, 246, 0.3)',
+                backgroundColor: showGoalLibrary ? 'rgba(139, 92, 246, 0.15)' : 'rgba(139, 92, 246, 0.05)',
+                color: '#c084fc', cursor: 'pointer', transition: 'all 0.2s',
+              }}
+            >
+              <Target style={{ width: '13px', height: '13px' }} />
+              Goals ({goalSchedules.filter(g => g.status === 'ACTIVE' || g.status === 'PENDING_APPROVAL').length})
+            </button>
+          </div>
         </div>
 
         {/* Messages Scroll Area */}
@@ -293,8 +353,38 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                     {msg.content}
                   </div>
 
-                  {/* Structured Campaign Proposal Card if generated by Agent */}
-                  {msg.proposal && (
+                  {/* Goal Schedule Card */}
+                  {msg.proposal && msg.proposal.type === 'GOAL_PROPOSAL' && msg.proposal.card && (
+                    <div style={{ padding: '18px', borderRadius: '14px', border: '1px solid rgba(139, 92, 246, 0.4)', backgroundColor: 'rgba(139, 92, 246, 0.05)', marginTop: '4px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                        <Target style={{ width: '18px', height: '18px', color: '#c084fc' }} />
+                        <h4 style={{ margin: 0, fontSize: '15px', fontWeight: 700, color: '#ffffff' }}>Goal Schedule Proposed</h4>
+                        <span style={{ marginLeft: 'auto', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', backgroundColor: msg.proposal.card.status === 'ACTIVE' ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)', color: msg.proposal.card.status === 'ACTIVE' ? '#34d399' : '#fbbf24', fontWeight: 700 }}>
+                          {msg.proposal.card.status}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '13px', color: '#d1d5db', marginBottom: '10px', lineHeight: '1.5' }}>
+                        {msg.proposal.card.goal_description}
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px', marginBottom: '14px' }}>
+                        <div><span style={{ color: '#6b7280' }}>Target Level:</span> <span style={{ color: '#e5e7eb', fontWeight: 600 }}>{msg.proposal.card.target_level}</span></div>
+                        <div><span style={{ color: '#6b7280' }}>Next Run:</span> <span style={{ color: '#38bdf8', fontWeight: 600 }}>{new Date(msg.proposal.card.next_run_at).toLocaleString()}</span></div>
+                      </div>
+                      {msg.proposal.card.status === 'PENDING_APPROVAL' && (
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                          <button onClick={() => handleApproveGoal(msg.proposal!.card.id)} style={{ flex: 1, backgroundColor: '#10b981', color: '#fff', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: 700, fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                            <CheckCircle2 style={{ width: '14px', height: '14px' }} /> Approve Schedule
+                          </button>
+                          <button onClick={() => handleCancelGoal(msg.proposal!.card.id)} style={{ flex: 1, backgroundColor: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', padding: '10px', borderRadius: '8px', fontWeight: 700, fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                            <X style={{ width: '14px', height: '14px' }} /> Reject
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Standard Campaign Proposal Card */}
+                  {msg.proposal && msg.proposal.type !== 'GOAL_PROPOSAL' && msg.proposal.campaignName && (
                     <div className="glass-panel" style={{ padding: '20px', borderRadius: '14px', border: '1px solid rgba(6, 182, 212, 0.4)', backgroundColor: 'rgba(6, 182, 212, 0.05)', marginTop: '4px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
                         <Sparkles style={{ width: '18px', height: '18px', color: '#06b6d4' }} />
@@ -330,23 +420,13 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                       <button
                         onClick={() => onApproveProposal(msg.proposal!)}
                         style={{
-                          width: '100%',
-                          backgroundColor: '#10b981',
-                          color: '#ffffff',
-                          border: 'none',
-                          padding: '10px 16px',
-                          borderRadius: '8px',
-                          fontWeight: 700,
-                          fontSize: '13px',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '8px',
+                          width: '100%', backgroundColor: '#10b981', color: '#ffffff', border: 'none',
+                          padding: '10px 16px', borderRadius: '8px', fontWeight: 700, fontSize: '13px',
+                          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
                         }}
                       >
                         <Play style={{ width: '14px', height: '14px', fill: '#ffffff' }} />
-                        Approve & Launch Live on Meta Ads Manager
+                        Approve &amp; Launch Live on Meta Ads Manager
                       </button>
                     </div>
                   )}
@@ -366,6 +446,67 @@ export const AgentChat: React.FC<AgentChatProps> = ({
             );
           })}
         </div>
+
+        {/* Goal Library Drawer (slides in from right) */}
+        {showGoalLibrary && (
+          <div style={{
+            position: 'absolute', right: 0, top: 0, bottom: 0, width: '360px',
+            backgroundColor: '#0c111d', borderLeft: '1px solid rgba(255,255,255,0.08)',
+            zIndex: 100, display: 'flex', flexDirection: 'column', boxShadow: '-8px 0 30px rgba(0,0,0,0.5)',
+          }}>
+            <div style={{ padding: '20px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Target style={{ width: '18px', height: '18px', color: '#c084fc' }} />
+                <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: '#f3f4f6' }}>Goal Schedules</h3>
+              </div>
+              <button onClick={() => setShowGoalLibrary(false)} style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', padding: '4px' }}>
+                <X style={{ width: '18px', height: '18px' }} />
+              </button>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+              {goalSchedules.length === 0 ? (
+                <div style={{ textAlign: 'center', color: '#4b5563', fontSize: '13px', marginTop: '40px' }}>
+                  No goal schedules in this chat session yet.
+                </div>
+              ) : (
+                goalSchedules.map((goal) => (
+                  <div key={goal.id} style={{
+                    padding: '16px', borderRadius: '12px', marginBottom: '12px',
+                    border: '1px solid ' + (goal.status === 'ACTIVE' ? 'rgba(16,185,129,0.3)' : goal.status === 'PENDING_APPROVAL' ? 'rgba(245,158,11,0.3)' : 'rgba(107,114,128,0.3)'),
+                    backgroundColor: goal.status === 'ACTIVE' ? 'rgba(16,185,129,0.05)' : goal.status === 'PENDING_APPROVAL' ? 'rgba(245,158,11,0.05)' : 'rgba(107,114,128,0.05)',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                      <span style={{
+                        fontSize: '10px', fontWeight: 700, padding: '3px 8px', borderRadius: '6px',
+                        backgroundColor: goal.status === 'ACTIVE' ? 'rgba(16,185,129,0.15)' : goal.status === 'PENDING_APPROVAL' ? 'rgba(245,158,11,0.15)' : 'rgba(107,114,128,0.15)',
+                        color: goal.status === 'ACTIVE' ? '#34d399' : goal.status === 'PENDING_APPROVAL' ? '#fbbf24' : '#6b7280',
+                      }}>
+                        {goal.status}
+                      </span>
+                      <span style={{ fontSize: '10px', color: '#4b5563' }}>{goal.target_level}</span>
+                    </div>
+                    <div style={{ fontSize: '13px', color: '#e5e7eb', fontWeight: 600, marginBottom: '8px', lineHeight: '1.4' }}>
+                      {goal.goal_description}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#6b7280', marginBottom: '10px' }}>
+                      <Calendar style={{ width: '12px', height: '12px' }} />
+                      Next Run: <span style={{ color: '#38bdf8' }}>{new Date(goal.next_run_at).toLocaleString()}</span>
+                    </div>
+                    {(goal.status === 'ACTIVE' || goal.status === 'PENDING_APPROVAL') && (
+                      <button onClick={() => handleCancelGoal(goal.id)} style={{
+                        width: '100%', backgroundColor: 'rgba(239,68,68,0.1)', color: '#f87171',
+                        border: '1px solid rgba(239,68,68,0.3)', padding: '8px', borderRadius: '6px',
+                        fontWeight: 600, fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s',
+                      }}>
+                        Cancel Goal
+                      </button>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Input Area */}
         <form onSubmit={handleSend} style={{ padding: '20px 28px', backgroundColor: '#0c111d', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>

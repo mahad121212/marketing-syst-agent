@@ -54,15 +54,17 @@ const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'set_goal_schedule',
-      description: 'Sets a schedule for when you (the Agent) should wake up and re-analyze the account. Use this when the user asks you to monitor or maintain a goal. Minimum gap is 4 hours. Goal cannot be modified before 18 hours unless explicitly requested.',
+      description: 'Sets a schedule for when you (the Agent) should wake up and re-analyze the account for a specific target. Minimum gap is 4 hours.',
       parameters: {
         type: 'object',
         properties: {
+          target_id: { type: 'string', description: 'The UUID of the campaign, ad set, or ad you want to monitor.' },
+          target_level: { type: 'string', enum: ['campaign', 'ad_set', 'ad', 'account'], description: 'The level of the target.' },
           hours_until_next_review: { type: 'number', description: 'How many hours from now to wake up (minimum 4).' },
-          lock_goal_hours: { type: 'number', description: 'How many hours to lock this goal from being overridden (default 18).' },
-          goal_description: { type: 'string', description: 'What are you monitoring? e.g., "Maintain CPA under $30 for Campaign X".' }
+          goal_description: { type: 'string', description: 'What are you monitoring? e.g., "Maintain CPA under $30 for Campaign X".' },
+          current_metrics_snapshot: { type: 'object', description: 'JSON object summarizing the current performance metrics of the target. This provides historical context for your next wake-up.' }
         },
-        required: ['hours_until_next_review', 'lock_goal_hours', 'goal_description']
+        required: ['target_id', 'target_level', 'hours_until_next_review', 'goal_description', 'current_metrics_snapshot']
       }
     }
   },
@@ -87,7 +89,7 @@ const AGENT_TOOLS = [
 // ============================================================
 // SYSTEM PROMPT GENERATOR
 // ============================================================
-function generateSystemPrompt(businessProfile: any) {
+function generateSystemPrompt(businessProfile: any, historical_context?: string) {
   let profileContext = 'No business profile found. Ask the user to fill out their Business Profile in the dashboard.';
   
   if (businessProfile) {
@@ -142,7 +144,14 @@ When you decide on an action, use \`propose_action_card\`.
 - Priority HIGH: Budget increases for winners, pausing clear losers.
 - Priority MANDATORY: Critical account failures, massive budget changes, or things that definitively require human eyes.
 
-When the user gives you a long-term directive (e.g. "keep cost low"), use \`set_goal_schedule\` to plan your next automated wake-up.`
+When the user asks you to monitor or maintain a goal, use \`set_goal_schedule\` to plan your next automated wake-up.
+If you are woken up in the background by a Cron Job, you MUST use \`set_goal_schedule\` at the end of your evaluation to schedule your NEXT wake-up to keep the recurring loop alive.
+
+## Background Context
+${historical_context ? `BACKGROUND WAKE-UP: You have been woken up to monitor a recurring goal.
+Historical Context when goal was set: ${historical_context}
+Compare current metrics to this historical context to make decisions.` : ''}
+`
 }
 
 // ============================================================
@@ -152,7 +161,9 @@ async function executeTool(
   toolName: string,
   toolArgs: Record<string, any>,
   supabaseClient: any,
-  userId: string
+  userId: string,
+  sessionId: string,
+  isBackground: boolean
 ): Promise<string> {
   switch (toolName) {
     case 'get_campaign_hierarchy': {
@@ -244,26 +255,36 @@ async function executeTool(
     }
 
     case 'set_goal_schedule': {
-      const lockHours = Math.max(toolArgs.lock_goal_hours || 18, 18)
       const reviewHours = Math.max(toolArgs.hours_until_next_review || 4, 4)
-      
       const now = new Date()
       const nextReview = new Date(now.getTime() + reviewHours * 60 * 60 * 1000)
-      const lockedUntil = new Date(now.getTime() + lockHours * 60 * 60 * 1000)
+
+      // If background, auto-approve the recurrence. If not, it needs user approval.
+      const status = isBackground ? 'ACTIVE' : 'PENDING_APPROVAL'
 
       const { data, error } = await supabaseClient
-        .from('agent_memory')
+        .from('goal_schedules')
         .insert({
           user_id: userId,
-          decision_made: `Goal Scheduled: ${toolArgs.goal_description}`,
-          next_review_at: nextReview.toISOString(),
-          goal_locked_until: lockedUntil.toISOString()
+          session_id: sessionId,
+          target_id: toolArgs.target_id,
+          target_level: toolArgs.target_level,
+          goal_description: toolArgs.goal_description,
+          metrics_snapshot: toolArgs.current_metrics_snapshot,
+          next_run_at: nextReview.toISOString(),
+          status: status
         })
         .select()
         .single()
         
       if (error) return JSON.stringify({ error: error.message })
-      return JSON.stringify({ success: true, next_review: nextReview, locked_until: lockedUntil })
+      
+      return JSON.stringify({ 
+        type: 'GOAL_PROPOSAL', 
+        card: data, 
+        success: true, 
+        message: isBackground ? `Recurring Goal automatically scheduled for next execution at ${nextReview.toISOString()}.` : `Goal Schedule proposed for ${toolArgs.target_level} and sent to user for approval.`
+      })
     }
 
     default:
@@ -289,7 +310,7 @@ serve(async (req) => {
     const { data: { user }, error: userError } = await supabaseClient.auth.getUser()
     if (userError || !user) throw new Error('Unauthorized')
 
-    const { prompt, session_id } = await req.json()
+    const { prompt, session_id, is_background, historical_context } = await req.json()
     if (!prompt) throw new Error('Prompt is required')
     if (!session_id) throw new Error('session_id is required')
 
@@ -328,7 +349,7 @@ serve(async (req) => {
 
     // Build the conversation array: system prompt + chat history
     const finalMessages: any[] = [
-      { role: 'system', content: generateSystemPrompt(businessProfile) },
+      { role: 'system', content: generateSystemPrompt(businessProfile, historical_context) },
       ...history
     ]
 
@@ -374,11 +395,11 @@ serve(async (req) => {
 
           thinkingSteps.push(`Executing Tool: ${toolName}`)
 
-          const toolResult = await executeTool(toolName, toolArgs, supabaseClient, user.id)
+          const toolResult = await executeTool(toolName, toolArgs, supabaseClient, user.id, session_id, !!is_background)
 
           try {
             const parsed = JSON.parse(toolResult)
-            if (parsed.type === 'PROPOSAL') proposals.push(parsed)
+            if (parsed.type === 'PROPOSAL' || parsed.type === 'GOAL_PROPOSAL') proposals.push(parsed)
           } catch {}
 
           toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult.substring(0, 500), status: 'success' })

@@ -98,7 +98,7 @@ export const App: React.FC = () => {
       // Load ALL sessions for the sidebar
       const { data: allSessions, error: sessionErr } = await supabase
         .from('chat_sessions')
-        .select('*')
+        .select('id, title, updated_at, last_viewed_at')
         .eq('user_id', userId)
         .order('updated_at', { ascending: false });
 
@@ -108,6 +108,13 @@ export const App: React.FC = () => {
       if (allSessions && allSessions.length > 0) {
         setChatSessions(allSessions);
         sessionId = allSessions[0].id;
+        
+        // Update last_viewed_at for the initially loaded session
+        if (activeTab === 'agent') {
+          const now = new Date().toISOString();
+          await supabase.from('chat_sessions').update({ last_viewed_at: now }).eq('id', sessionId);
+          setChatSessions(allSessions.map(s => s.id === sessionId ? { ...s, last_viewed_at: now } : s));
+        }
       } else {
         // Create first session
         const { data: newSession, error: createErr } = await supabase
@@ -177,6 +184,11 @@ export const App: React.FC = () => {
   const handleSwitchSession = async (sessionId: string) => {
     setCurrentSessionId(sessionId);
     await loadMessagesForSession(sessionId);
+    
+    // Update last_viewed_at for this session
+    const now = new Date().toISOString();
+    await supabase.from('chat_sessions').update({ last_viewed_at: now }).eq('id', sessionId);
+    setChatSessions((prev) => prev.map((s) => s.id === sessionId ? { ...s, last_viewed_at: now } : s));
   };
 
   const handleDeleteSession = async (sessionId: string) => {
@@ -238,10 +250,15 @@ export const App: React.FC = () => {
       }));
 
       // Parse proposals from the Edge Function
-      let proposalObj = undefined;
+      let proposalObj: any = undefined;
       if (data.proposals && data.proposals.length > 0) {
         const p = data.proposals[0];
-        if (p.type === 'CAMPAIGN_CREATED') {
+        if (p.type === 'GOAL_PROPOSAL') {
+          proposalObj = {
+            type: 'GOAL_PROPOSAL',
+            card: p.card,
+          };
+        } else if (p.type === 'CAMPAIGN_CREATED') {
           proposalObj = {
             campaignName: p.campaign?.name || 'New Campaign',
             budget: p.campaign?.daily_budget || 0,
@@ -254,7 +271,7 @@ export const App: React.FC = () => {
             campaignName: p.campaign_name || 'Campaign Adjustment',
             budget: p.new_daily_budget || 0,
             objective: p.action || 'ADJUSTMENT',
-            suggestedCopy: `${p.reasoning}\n\nExpected Impact: ${p.expected_impact}`,
+            suggestedCopy: (p.reasoning || '') + '\n\nExpected Impact: ' + (p.expected_impact || ''),
             targetAudience: p.action,
           };
         }
@@ -366,7 +383,7 @@ export const App: React.FC = () => {
       <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} supabaseConnected={supabaseConnected} />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         <Header activeTabName={getTabName()} isAgentRunning={isAgentRunning} />
-        <main style={{ flex: 1, overflowY: 'auto' }}>
+        <main style={{ flex: 1, overflowY: 'auto', position: 'relative' }}>
           {activeTab === 'dashboard' && (
             <Dashboard campaigns={campaigns} onTriggerAgentAnalysis={handleTriggerInstantAudit} />
           )}
