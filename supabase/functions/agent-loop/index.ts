@@ -234,12 +234,13 @@ serve(async (req) => {
     const model = settings.preferred_model || 'google/gemini-3.6-flash'
 
     // 1. Save the incoming user prompt
-    await supabaseClient.from('chat_messages').insert({
+    const { error: userMsgErr } = await supabaseClient.from('chat_messages').insert({
       session_id,
       user_id: user.id,
       role: 'user',
       content: prompt
     })
+    if (userMsgErr) throw new Error(`Failed to save user message: ${userMsgErr.message}`)
 
     // 2. Fetch past chat history for this session (last 10 messages)
     const { data: pastMessages } = await supabaseClient
@@ -335,7 +336,7 @@ serve(async (req) => {
     })
 
     // 3. Save the final agent response to history
-    await supabaseClient.from('chat_messages').insert({
+    const { error: agentMsgErr } = await supabaseClient.from('chat_messages').insert({
       session_id,
       user_id: user.id,
       role: 'agent',
@@ -344,6 +345,7 @@ serve(async (req) => {
       tool_calls: toolExecutions,
       proposal: proposals.length > 0 ? proposals[0] : null
     })
+    if (agentMsgErr) throw new Error(`Failed to save agent message: ${agentMsgErr.message}`)
 
     return new Response(
       JSON.stringify({ response: finalContent, thinkingSteps, toolCalls: toolExecutions, proposals }),
