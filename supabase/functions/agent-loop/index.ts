@@ -13,103 +13,105 @@ const AGENT_TOOLS = [
   {
     type: 'function',
     function: {
-      name: 'get_active_campaigns',
-      description: 'Fetches all active campaigns for the current user from the database, including their real-time performance metrics (impressions, clicks, spend, conversions, CPC, CTR, CPA, ROAS, CPM). Use this tool to OBSERVE the current state of the ad account.',
+      name: 'get_campaign_hierarchy',
+      description: 'Fetches active campaigns, including their nested Ad Sets and Ads, and their real-time performance metrics (ROAS, CPA, etc). Use this tool to OBSERVE the current state of the ad account at all granular levels.',
       parameters: { type: 'object', properties: {}, required: [] }
     }
   },
   {
     type: 'function',
     function: {
-      name: 'get_campaign_details',
-      description: 'Fetches full details for a specific campaign by its ID, including targeting configuration and all performance metrics. Use this to deep-dive into a single campaign.',
+      name: 'check_agent_memory',
+      description: 'Checks your own memory for a specific campaign or ad set to see what decisions you made previously and how much time has passed. ALWAYS use this before proposing a change.',
       parameters: {
         type: 'object',
         properties: {
-          campaign_id: { type: 'string', description: 'The UUID of the campaign to inspect.' }
+          target_id: { type: 'string', description: 'The UUID of the campaign or ad set to check memory for.' }
         },
-        required: ['campaign_id']
+        required: ['target_id']
       }
     }
   },
   {
     type: 'function',
     function: {
-      name: 'propose_campaign_adjustment',
-      description: 'Proposes an adjustment to a campaign. This does NOT execute the change — it returns a structured proposal for the user to approve. Use this to DECIDE and ACT after analyzing performance data. Actions: PAUSE (pause a losing campaign), INCREASE_BUDGET (scale a winning campaign), DECREASE_BUDGET (reduce spend on underperforming campaign), CHANGE_TARGETING (suggest new targeting parameters).',
+      name: 'propose_action_card',
+      description: 'Proposes an adjustment to a campaign, ad set, or ad. This creates an Action Card in the user\'s Action Center. Use this to DECIDE and ACT. You MUST assign a priority: LOW (minor tweaks), HIGH (budget scaling/pausing losers), MANDATORY (critical failures needing immediate manual review).',
       parameters: {
         type: 'object',
         properties: {
-          campaign_id: { type: 'string', description: 'The UUID of the campaign to adjust.' },
-          campaign_name: { type: 'string', description: 'The name of the campaign.' },
-          action: { type: 'string', enum: ['PAUSE', 'INCREASE_BUDGET', 'DECREASE_BUDGET', 'CHANGE_TARGETING', 'LAUNCH_NEW'], description: 'The type of adjustment to propose.' },
-          new_daily_budget: { type: 'number', description: 'The new proposed daily budget (if adjusting budget).' },
-          reasoning: { type: 'string', description: 'A detailed explanation of WHY this adjustment is recommended based on the data.' },
-          expected_impact: { type: 'string', description: 'What the expected impact of this change will be on CPA/ROAS.' }
+          target_id: { type: 'string', description: 'The UUID of the campaign or ad set to adjust.' },
+          action_type: { type: 'string', enum: ['PAUSE', 'INCREASE_BUDGET', 'DECREASE_BUDGET', 'CHANGE_TARGETING', 'CREATE_NEW'], description: 'The type of adjustment.' },
+          priority: { type: 'string', enum: ['LOW', 'HIGH', 'MANDATORY'], description: 'The priority of this action.' },
+          proposed_changes: { type: 'object', description: 'JSON object detailing the exact changes (e.g. {"new_budget": 150}).' },
+          reasoning: { type: 'string', description: 'A detailed explanation of WHY this adjustment is recommended based on the data, business context, and time elapsed.' }
         },
-        required: ['campaign_id', 'campaign_name', 'action', 'reasoning', 'expected_impact']
+        required: ['target_id', 'action_type', 'priority', 'proposed_changes', 'reasoning']
       }
     }
   },
   {
     type: 'function',
     function: {
-      name: 'create_campaign_draft',
-      description: 'Creates a new campaign draft in the database with PAUSED status. Use this when the user wants to launch a brand new campaign. The agent should fill in all targeting parameters based on the business goals discussed.',
+      name: 'set_goal_schedule',
+      description: 'Sets a schedule for when you (the Agent) should wake up and re-analyze the account. Use this when the user asks you to monitor or maintain a goal. Minimum gap is 4 hours. Goal cannot be modified before 18 hours unless explicitly requested.',
       parameters: {
         type: 'object',
         properties: {
-          name: { type: 'string', description: 'Campaign name.' },
-          daily_budget: { type: 'number', description: 'Proposed daily budget in USD.' },
-          targeting: {
-            type: 'object',
-            description: 'Targeting configuration.',
-            properties: {
-              age_min: { type: 'number' },
-              age_max: { type: 'number' },
-              gender: { type: 'string', enum: ['male', 'female', 'all'] },
-              interests: { type: 'array', items: { type: 'string' } },
-              geo: { type: 'string', description: 'Comma-separated country codes.' }
-            }
-          },
-          objective: { type: 'string', description: 'Campaign objective (e.g., CONVERSIONS, TRAFFIC, AWARENESS).' },
-          suggested_ad_copy: { type: 'string', description: 'AI-generated ad copy for the campaign.' }
+          hours_until_next_review: { type: 'number', description: 'How many hours from now to wake up (minimum 4).' },
+          lock_goal_hours: { type: 'number', description: 'How many hours to lock this goal from being overridden (default 18).' },
+          goal_description: { type: 'string', description: 'What are you monitoring? e.g., "Maintain CPA under $30 for Campaign X".' }
         },
-        required: ['name', 'daily_budget', 'targeting', 'objective', 'suggested_ad_copy']
+        required: ['hours_until_next_review', 'lock_goal_hours', 'goal_description']
       }
     }
   }
 ]
 
 // ============================================================
-// SYSTEM PROMPT — The Agent's core identity and reasoning framework
+// SYSTEM PROMPT GENERATOR
 // ============================================================
-const SYSTEM_PROMPT = `You are MetaAgent AI, an autonomous Meta Ads optimization agent. You follow the OODA Loop (Observe, Orient, Decide, Act) methodology to manage advertising campaigns.
+function generateSystemPrompt(businessProfile: any) {
+  let profileContext = 'No business profile found. Ask the user to fill out their Business Profile in the dashboard.';
+  
+  if (businessProfile) {
+    profileContext = `
+BUSINESS CONTEXT:
+- Name: ${businessProfile.business_name}
+- Industry: ${businessProfile.industry}
+- Description: ${businessProfile.business_description}
+- Market: ${businessProfile.country} (${businessProfile.currency})
+- Target CPA: ${businessProfile.target_cpa} ${businessProfile.currency}
+- Target ROAS: ${businessProfile.target_roas}x
+- Budget Cap: ${businessProfile.monthly_ad_budget} ${businessProfile.currency}/mo
+- Stage: ${businessProfile.business_stage}
+- Additional Rules: ${businessProfile.additional_context || 'None'}
+`;
+  }
 
-## Your Core Capabilities
-- You have direct access to the user's campaign database via tools.
-- You can observe real-time campaign metrics (ROAS, CPA, CTR, CPC, CPM, Impressions, Conversions).
-- You can propose specific, data-driven adjustments to campaigns.
-- You can draft new campaigns with optimized targeting based on business goals.
+  return `You are MetaAgent AI, a highly advanced autonomous Meta Ads optimization agent capable of deep contextual reasoning.
 
-## Your Reasoning Process (OODA Loop)
-For every user request, you MUST follow this loop:
-1. **OBSERVE**: Call get_active_campaigns to fetch the latest data. Never guess or assume metrics.
-2. **ORIENT**: Analyze the data against the user's goals. Identify winners (ROAS > 3.0x, CPA within target) and losers (ROAS < 1.5x, CPA > 2x target).
-3. **DECIDE**: Formulate a specific strategy based on the data.
-4. **ACT**: Call propose_campaign_adjustment or create_campaign_draft to produce structured, actionable proposals.
+${profileContext}
 
-## Key Rules
-- ALWAYS call get_active_campaigns first before giving any advice. You must ground your analysis in real data.
-- When a campaign has ROAS < 1.5x, recommend pausing or drastically reducing its budget.
-- When a campaign has ROAS > 3.5x, recommend scaling its budget by 15-25%.
-- A healthy CPA is typically below $35 for e-commerce. Flag anything above $50 as critical.
-- NEVER fabricate metrics. Only reference numbers returned by your tools.
-- When proposing adjustments, ALWAYS use the propose_campaign_adjustment tool so the user gets a structured approval card.
-- Be concise, data-driven, and direct. You are an expert strategist, not a chatbot.`
+## Your Reasoning Framework
+Do NOT use rigid if/else rules. You must reason conceptually:
+1. **Business Context**: A $50 CPA is terrible for a $20 product but excellent for a $500 product. Respect the Target CPA and ROAS above.
+2. **Market Context**: You are operating in ${businessProfile?.country || 'an unknown country'} using ${businessProfile?.currency || 'USD'}. Adjust your expectations for CPMs and Clicks accordingly.
+3. **Temporal Context**: Never judge a campaign that is too young. Meta requires time to exit the learning phase.
+4. **Hierarchy**: Analyze at the Ad Set and Ad levels. Don't pause an entire campaign if only one Ad Set is dragging it down.
+5. **Memory**: ALWAYS use the \`check_agent_memory\` tool before taking action to ensure you aren't repeating a decision you made 2 hours ago.
+
+## Your Actions
+When you decide on an action, use \`propose_action_card\`.
+- Priority LOW: Minor targeting tweaks or copy changes.
+- Priority HIGH: Budget increases for winners, pausing clear losers.
+- Priority MANDATORY: Critical account failures, massive budget changes, or things that definitively require human eyes.
+
+When the user gives you a long-term directive (e.g. "keep cost low"), use \`set_goal_schedule\` to plan your next automated wake-up.`
+}
 
 // ============================================================
-// TOOL EXECUTION — Actually runs the tool against Supabase
+// TOOL EXECUTION
 // ============================================================
 async function executeTool(
   toolName: string,
@@ -118,59 +120,80 @@ async function executeTool(
   userId: string
 ): Promise<string> {
   switch (toolName) {
-    case 'get_active_campaigns': {
+    case 'get_campaign_hierarchy': {
+      // In a real app, this would do a JOIN. For now, we query the tables we have.
+      const { data: campaigns } = await supabaseClient.from('campaigns').select('*').eq('user_id', userId)
+      const { data: adSets } = await supabaseClient.from('ad_sets').select('*').eq('user_id', userId)
+      const { data: ads } = await supabaseClient.from('ads').select('*').eq('user_id', userId)
+      
+      return JSON.stringify({ campaigns, adSets, ads })
+    }
+
+    case 'check_agent_memory': {
       const { data, error } = await supabaseClient
-        .from('campaign_state')
+        .from('agent_memory')
         .select('*')
+        .eq('campaign_id', toolArgs.target_id)
         .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(3)
       if (error) return JSON.stringify({ error: error.message })
-      return JSON.stringify(data)
+      return JSON.stringify(data.length > 0 ? data : { note: "No previous memory for this target." })
     }
 
-    case 'get_campaign_details': {
+    case 'propose_action_card': {
       const { data, error } = await supabaseClient
-        .from('campaign_state')
-        .select('*')
-        .eq('id', toolArgs.campaign_id)
-        .eq('user_id', userId)
-        .single()
-      if (error) return JSON.stringify({ error: error.message })
-      return JSON.stringify(data)
-    }
-
-    case 'propose_campaign_adjustment': {
-      // This tool doesn't mutate. It returns a structured proposal for the frontend.
-      return JSON.stringify({
-        type: 'PROPOSAL',
-        campaign_id: toolArgs.campaign_id,
-        campaign_name: toolArgs.campaign_name,
-        action: toolArgs.action,
-        new_daily_budget: toolArgs.new_daily_budget || null,
-        reasoning: toolArgs.reasoning,
-        expected_impact: toolArgs.expected_impact
-      })
-    }
-
-    case 'create_campaign_draft': {
-      const { data, error } = await supabaseClient
-        .from('campaign_state')
+        .from('action_cards')
         .insert({
           user_id: userId,
-          name: toolArgs.name,
-          status: 'PAUSED',
-          daily_budget: toolArgs.daily_budget,
-          targeting: toolArgs.targeting || {},
-          performance_metrics: { impressions: 0, clicks: 0, spend: 0, conversions: 0, cpc: 0, ctr: 0, cpa: 0, roas: 0, cpm: 0 }
+          campaign_id: toolArgs.target_id,
+          priority: toolArgs.priority,
+          action_type: toolArgs.action_type,
+          proposed_changes: toolArgs.proposed_changes,
+          reasoning: toolArgs.reasoning,
+          status: 'PENDING'
         })
         .select()
         .single()
+
       if (error) return JSON.stringify({ error: error.message })
-      return JSON.stringify({
-        type: 'CAMPAIGN_CREATED',
-        campaign: data,
-        suggested_ad_copy: toolArgs.suggested_ad_copy,
-        objective: toolArgs.objective
+
+      // Also record this in agent memory
+      await supabaseClient.from('agent_memory').insert({
+        user_id: userId,
+        campaign_id: toolArgs.target_id,
+        decision_made: `Proposed ${toolArgs.action_type}`,
+        reasoning_snapshot: toolArgs.reasoning
       })
+
+      return JSON.stringify({
+        type: 'PROPOSAL',
+        card: data,
+        message: `Action Card generated with ${toolArgs.priority} priority and sent to Action Center.`
+      })
+    }
+
+    case 'set_goal_schedule': {
+      const lockHours = Math.max(toolArgs.lock_goal_hours || 18, 18)
+      const reviewHours = Math.max(toolArgs.hours_until_next_review || 4, 4)
+      
+      const now = new Date()
+      const nextReview = new Date(now.getTime() + reviewHours * 60 * 60 * 1000)
+      const lockedUntil = new Date(now.getTime() + lockHours * 60 * 60 * 1000)
+
+      const { data, error } = await supabaseClient
+        .from('agent_memory')
+        .insert({
+          user_id: userId,
+          decision_made: `Goal Scheduled: ${toolArgs.goal_description}`,
+          next_review_at: nextReview.toISOString(),
+          goal_locked_until: lockedUntil.toISOString()
+        })
+        .select()
+        .single()
+        
+      if (error) return JSON.stringify({ error: error.message })
+      return JSON.stringify({ success: true, next_review: nextReview, locked_until: lockedUntil })
     }
 
     default:
@@ -179,7 +202,7 @@ async function executeTool(
 }
 
 // ============================================================
-// MAIN HANDLER — The Agentic OODA Loop
+// MAIN HANDLER
 // ============================================================
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -193,62 +216,38 @@ serve(async (req) => {
       { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
     )
 
-    const {
-      data: { user },
-      error: userError,
-    } = await supabaseClient.auth.getUser()
-
-    if (userError || !user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 401,
-      })
-    }
+    const { data: { user }, error: userError } = await supabaseClient.auth.getUser()
+    if (userError || !user) throw new Error('Unauthorized')
 
     const { prompt } = await req.json()
-    if (!prompt) {
-      return new Response(JSON.stringify({ error: 'Prompt is required' }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 400,
-      })
-    }
+    if (!prompt) throw new Error('Prompt is required')
 
-    // Fetch user's OpenRouter API key securely
-    const { data: settings, error: settingsError } = await supabaseClient
-      .from('user_settings')
-      .select('openrouter_key, preferred_model')
-      .eq('id', user.id)
-      .single()
+    // Fetch API Key
+    const { data: settings } = await supabaseClient.from('user_settings').select('openrouter_key, preferred_model').eq('id', user.id).single()
+    if (!settings?.openrouter_key) throw new Error('OpenRouter API Key not found. Please save it in Settings.')
 
-    if (settingsError || !settings?.openrouter_key) {
-      return new Response(
-        JSON.stringify({ error: 'OpenRouter API Key not found. Please save it in Settings.' }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
-      )
-    }
+    // Fetch Business Profile for Context
+    const { data: businessProfile } = await supabaseClient.from('business_profiles').select('*').eq('user_id', user.id).single()
 
     const openRouterKey = settings.openrouter_key
     const model = settings.preferred_model || 'google/gemini-3.6-flash'
 
-    // Build the initial conversation
     const messages: any[] = [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: generateSystemPrompt(businessProfile) },
       { role: 'user', content: prompt }
     ]
 
-    // Track tool executions for the frontend
     const toolExecutions: any[] = []
-    const thinkingSteps: string[] = ['Initializing OODA Loop...']
-    let proposals: any[] = []
+    const thinkingSteps: string[] = ['Initializing Context-Aware OODA Loop...']
+    if (!businessProfile) thinkingSteps.push('WARNING: No Business Profile found. Agent is running without context.')
+    else thinkingSteps.push(`Loaded Business Profile: ${businessProfile.business_name} (${businessProfile.country})`)
 
-    // ============================================================
-    // THE AGENTIC LOOP — Keep calling the LLM until it stops requesting tools
-    // ============================================================
+    let proposals: any[] = []
     const MAX_ITERATIONS = 6
     let finalContent = ''
 
     for (let i = 0; i < MAX_ITERATIONS; i++) {
-      thinkingSteps.push(`Iteration ${i + 1}: Sending ${messages.length} messages to ${model}...`)
+      thinkingSteps.push(`Iteration ${i + 1}: Reasoning with ${model}...`)
 
       const openRouterResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
@@ -266,88 +265,45 @@ serve(async (req) => {
         })
       })
 
-      if (!openRouterResponse.ok) {
-        const errorText = await openRouterResponse.text()
-        throw new Error(`OpenRouter Error: ${errorText}`)
-      }
+      if (!openRouterResponse.ok) throw new Error(`OpenRouter Error: ${await openRouterResponse.text()}`)
 
       const aiData = await openRouterResponse.json()
-      const choice = aiData.choices[0]
-      const assistantMessage = choice.message
-
-      // Add the assistant's response to the conversation history
+      const assistantMessage = aiData.choices[0].message
       messages.push(assistantMessage)
 
-      // Check if the LLM wants to call tools
       if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
         for (const toolCall of assistantMessage.tool_calls) {
           const toolName = toolCall.function.name
           let toolArgs = {}
-          try {
-            toolArgs = JSON.parse(toolCall.function.arguments || '{}')
-          } catch {
-            toolArgs = {}
-          }
+          try { toolArgs = JSON.parse(toolCall.function.arguments || '{}') } catch {}
 
-          thinkingSteps.push(`Executing Tool: ${toolName}(${JSON.stringify(toolArgs).substring(0, 100)}...)`)
+          thinkingSteps.push(`Executing Tool: ${toolName}`)
 
-          // Execute the tool against our Supabase database
           const toolResult = await executeTool(toolName, toolArgs, supabaseClient, user.id)
 
-          // Check if the tool returned a proposal
           try {
             const parsed = JSON.parse(toolResult)
-            if (parsed.type === 'PROPOSAL') {
-              proposals.push(parsed)
-            }
-            if (parsed.type === 'CAMPAIGN_CREATED') {
-              proposals.push(parsed)
-            }
+            if (parsed.type === 'PROPOSAL') proposals.push(parsed)
           } catch {}
 
-          toolExecutions.push({
-            name: toolName,
-            args: toolArgs,
-            result: toolResult.substring(0, 500), // Truncate for frontend display
-            status: 'success'
-          })
-
-          // Add the tool result back into the conversation so the LLM can continue reasoning
-          messages.push({
-            role: 'tool',
-            tool_call_id: toolCall.id,
-            content: toolResult
-          })
+          toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult.substring(0, 500), status: 'success' })
+          messages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResult })
         }
-        // Continue the loop — the LLM will process the tool results and may call more tools
       } else {
-        // No more tool calls — the LLM has finished reasoning
         finalContent = assistantMessage.content || ''
-        thinkingSteps.push('OODA Loop complete. Generating final response.')
+        thinkingSteps.push('OODA Loop complete. Finalizing decision.')
         break
       }
     }
 
-    // Log this entire agent interaction
     await supabaseClient.from('agent_logs').insert({
       user_id: user.id,
-      action: 'OODA_LOOP_CYCLE',
-      details: {
-        prompt,
-        model,
-        iterations: toolExecutions.length,
-        tools_called: toolExecutions.map(t => t.name),
-        proposals: proposals.length
-      }
+      action: 'CONTEXTUAL_OODA_CYCLE',
+      details: { prompt, model, iterations: toolExecutions.length, proposals: proposals.length }
     })
 
     return new Response(
-      JSON.stringify({
-        response: finalContent,
-        thinkingSteps,
-        toolCalls: toolExecutions,
-        proposals
-      }),
+      JSON.stringify({ response: finalContent, thinkingSteps, toolCalls: toolExecutions, proposals }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   } catch (error: any) {

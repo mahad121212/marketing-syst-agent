@@ -11,8 +11,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, supab
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'agent', label: 'Marketing Agent', icon: Bot, badge: 'OODA' },
+    { id: 'actions', label: 'Actions Lined Up', icon: Sparkles, badge: 'NEW' },
     { id: 'campaigns', label: 'Meta Campaigns', icon: Megaphone },
     { id: 'analytics', label: 'ROAS Analytics', icon: TrendingUp },
+    { id: 'business', label: 'Business Profile', icon: Database, badge: 'REQUIRED' },
     { id: 'settings', label: 'Meta & API Settings', icon: Settings },
   ];
 

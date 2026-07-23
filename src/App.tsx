@@ -6,6 +6,8 @@ import { AgentChat } from './components/AgentChat';
 import { CampaignsList } from './components/CampaignsList';
 import { SettingsModal } from './components/SettingsModal';
 import { Auth } from './components/Auth';
+import { BusinessProfile } from './components/BusinessProfile';
+import { ActionCenter } from './components/ActionCenter';
 import { Campaign, AgentMessage } from './types';
 import { supabase } from './lib/supabase';
 import { Session } from '@supabase/supabase-js';
@@ -285,6 +287,8 @@ export const App: React.FC = () => {
               }
             }} />
           )}
+          {activeTab === 'business' && <BusinessProfile />}
+          {activeTab === 'actions' && <ActionCenter />}
           {activeTab === 'analytics' && (
             <Dashboard campaigns={campaigns} onTriggerAgentAnalysis={handleTriggerInstantAudit} />
           )}
