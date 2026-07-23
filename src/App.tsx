@@ -5,10 +5,13 @@ import { Dashboard } from './components/Dashboard';
 import { AgentChat } from './components/AgentChat';
 import { CampaignsList } from './components/CampaignsList';
 import { SettingsModal } from './components/SettingsModal';
+import { Auth } from './components/Auth';
 import { Campaign, AgentMessage } from './types';
 import { supabase } from './lib/supabase';
+import { Session } from '@supabase/supabase-js';
 
 export const App: React.FC = () => {
+  const [session, setSession] = useState<Session | null>(null);
   const [activeTab, setActiveTab] = useState('agent');
   const [supabaseConnected, setSupabaseConnected] = useState(false);
   const [isAgentRunning, setIsAgentRunning] = useState(false);
@@ -75,21 +78,25 @@ export const App: React.FC = () => {
     },
   ]);
 
-  // Verify Supabase Connection
+  // Handle Supabase Auth Session
   useEffect(() => {
-    async function checkSupabase() {
-      try {
-        const { error } = await supabase.from('campaigns').select('count', { count: 'exact', head: true });
-        // Even if table doesn't exist yet, client responded cleanly
-        setSupabaseConnected(true);
-      } catch (err) {
-        setSupabaseConnected(true); // Connected to URL endpoint
-      }
-    }
-    checkSupabase();
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setSupabaseConnected(!!session);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setSupabaseConnected(!!session);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  const handleSendMessage = (text: string) => {
+
+  const handleSendMessage = async (text: string) => {
     const userMsgId = `usr-${Date.now()}`;
     const newMsg: AgentMessage = {
       id: userMsgId,
@@ -102,47 +109,56 @@ export const App: React.FC = () => {
     setIsProcessing(true);
     setIsAgentRunning(true);
 
-    // Simulate Agent OODA Loop & Strategy Reasoning
-    setTimeout(() => {
-      const agentMsgId = `agt-${Date.now()}`;
-      const isBudgetProposal = text.toLowerCase().includes('budget') || text.toLowerCase().includes('launch') || text.toLowerCase().includes('campaign') || text.toLowerCase().includes('$');
+    try {
+      const { data, error } = await supabase.functions.invoke('agent-loop', {
+        body: { prompt: text }
+      });
 
-      const thinkingSteps = [
-        'Extracting business parameters and budget goals from user input...',
-        'Querying Meta Policy RAG database for health & cosmetics ad compliance...',
-        'Running audience overlap analysis across active Meta Ad Sets...',
-        'Executing Tool: search_meta_policy_rag(topic="skincare claims")',
-        'Executing Tool: calculate_optimal_budget_split(daily_spend=120)',
-        'Formulating high-converting A/B copy and targeting parameters...',
-      ];
+      if (error) throw error;
+
+      const agentMsgId = `agt-${Date.now()}`;
+      
+      // Parse if the agent returned a tool_calls or proposal block
+      // For now, we will handle the pure LLM response text
+      let agentResponseContent = data.response || "No response received.";
+      let proposalObj = undefined;
+      let thinkingSteps = ['Connected to Supabase Edge Function', 'Executing OpenRouter API call...'];
+
+      // Quick parser to mock a proposal if the agent mentions "budget" (Temporary until we implement strict JSON schemas)
+      if (text.toLowerCase().includes('budget') || text.toLowerCase().includes('launch')) {
+        proposalObj = {
+          campaignName: 'AI Autonomous Scale - Broad Hook',
+          budget: 120,
+          objective: 'CONVERSIONS',
+          suggestedCopy: 'Unlock radiant skincare backed by science. Experience 24-hour hydration without heavy oils. Order today & enjoy free shipping!',
+          targetAudience: 'Broad Women 22-50 + Interest: Clean Beauty',
+        };
+        thinkingSteps.push('Identified budget parameter. Generated Strategy Proposal.');
+      }
 
       const agentResponse: AgentMessage = {
         id: agentMsgId,
         sender: 'agent',
-        content: isBudgetProposal
-          ? `I have analyzed your input against your current Meta account metrics and active Meta Ads compliance policies.\n\nBased on our benchmark ROAS of 3.85x, I have engineered a new Campaign Strategy designed to achieve a target CPA under $28.00.`
-          : `I have analyzed your request. Based on real-time data from your active ad sets, your current account is performing strongly at 3.85x average ROAS.\n\nHow would you like to proceed? We can scale existing winning ad sets or test a new broad audience campaign.`,
+        content: agentResponseContent,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        thinkingSteps,
-        toolCalls: [
-          { name: 'search_meta_policies', args: { topic: 'cosmetics' }, status: 'success' },
-          { name: 'analyze_audience_overlap', args: { adSetA: 'c-1', adSetB: 'c-2' }, status: 'success' },
-        ],
-        proposal: isBudgetProposal
-          ? {
-              campaignName: 'AI Autonomous Scale - Broad Hook',
-              budget: 120,
-              objective: 'CONVERSIONS',
-              suggestedCopy: 'Unlock radiant skincare backed by science. Experience 24-hour hydration without heavy oils. Order today & enjoy free shipping!',
-              targetAudience: 'Broad Women 22-50 + Interest: Clean Beauty',
-            }
-          : undefined,
+        thinkingSteps: thinkingSteps,
+        proposal: proposalObj,
       };
 
       setMessages((prev) => [...prev, agentResponse]);
+    } catch (err: any) {
+      console.error('Agent execution failed:', err);
+      const errorMsg: AgentMessage = {
+        id: `err-${Date.now()}`,
+        sender: 'agent',
+        content: `Error connecting to Agent Edge Function: ${err.message}. Make sure you have saved your OpenRouter API Key in Settings and the Edge Function is deployed.`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+    } finally {
       setIsProcessing(false);
       setIsAgentRunning(false);
-    }, 2000);
+    }
   };
 
   const handleApproveProposal = (proposal: NonNullable<AgentMessage['proposal']>) => {
@@ -208,6 +224,10 @@ export const App: React.FC = () => {
     }
   };
 
+  if (!session) {
+    return <Auth onLogin={() => {}} />;
+  }
+
   return (
     <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: '#090d16', color: '#f3f4f6' }}>
       <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} supabaseConnected={supabaseConnected} />
@@ -233,9 +253,21 @@ export const App: React.FC = () => {
             />
           )}
           {activeTab === 'settings' && (
-            <SettingsModal onSave={(settings) => {
+            <SettingsModal onSave={async (settings) => {
               console.log('Saving settings to Supabase...', settings);
-              // TODO: Implement actual Supabase save logic when Auth is ready
+              try {
+                const { error } = await supabase
+                  .from('user_settings')
+                  .upsert({
+                    id: session.user.id,
+                    openrouter_key: settings.openRouterKey,
+                    preferred_model: settings.preferredModel,
+                  });
+                if (error) throw error;
+                // Also update local state or show success toast if needed
+              } catch (err) {
+                console.error('Failed to save settings:', err);
+              }
             }} />
           )}
           {activeTab === 'analytics' && (
