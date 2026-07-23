@@ -18,6 +18,7 @@ export const App: React.FC = () => {
   const [supabaseConnected, setSupabaseConnected] = useState(false);
   const [isAgentRunning, setIsAgentRunning] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
   // Initial Mock Campaigns
   const [campaigns, setCampaigns] = useState<Campaign[]>([
@@ -66,25 +67,16 @@ export const App: React.FC = () => {
   ]);
 
   // Initial Agent Chat Messages
-  const [messages, setMessages] = useState<AgentMessage[]>([
-    {
-      id: 'm-1',
-      sender: 'agent',
-      content: 'Hello! I am your Autonomous Meta Ads Agent powered by Gemini 3.6 Flash & Supabase.\n\nI continuously monitor your CPA, ROAS, and Meta policy updates in real-time. Share your budget, business goals, or product proposal, and I will formulate a high-converting strategy proposal for you.',
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      thinkingSteps: [
-        'Initialized Meta Graph API connection v19.0',
-        'Queried active Supabase project "marketing syst agent sb"',
-        'Loaded current historical baseline: Account ROAS 3.82x',
-      ],
-    },
-  ]);
+  const [messages, setMessages] = useState<AgentMessage[]>([]);
 
   // Handle Supabase Auth Session
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setSupabaseConnected(!!session);
+      if (session) {
+        loadOrCreateSession(session.user.id);
+      }
     });
 
     const {
@@ -92,10 +84,67 @@ export const App: React.FC = () => {
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setSupabaseConnected(!!session);
+      if (session) {
+        loadOrCreateSession(session.user.id);
+      }
     });
 
     return () => subscription.unsubscribe();
   }, []);
+
+  const loadOrCreateSession = async (userId: string) => {
+    try {
+      // Find most recent session
+      const { data: sessions, error: sessionErr } = await supabase
+        .from('chat_sessions')
+        .select('*')
+        .eq('user_id', userId)
+        .order('updated_at', { ascending: false })
+        .limit(1);
+
+      if (sessionErr) throw sessionErr;
+
+      let sessionId = null;
+      if (sessions && sessions.length > 0) {
+        sessionId = sessions[0].id;
+      } else {
+        // Create new session
+        const { data: newSession, error: createErr } = await supabase
+          .from('chat_sessions')
+          .insert({ user_id: userId, title: 'Main Chat' })
+          .select()
+          .single();
+        if (createErr) throw createErr;
+        sessionId = newSession.id;
+      }
+
+      setCurrentSessionId(sessionId);
+
+      // Load messages
+      const { data: chatMsgs, error: msgsErr } = await supabase
+        .from('chat_messages')
+        .select('*')
+        .eq('session_id', sessionId)
+        .order('created_at', { ascending: true });
+
+      if (msgsErr) throw msgsErr;
+
+      if (chatMsgs) {
+        const loadedMsgs: AgentMessage[] = chatMsgs.map((msg: any) => ({
+          id: msg.id,
+          sender: msg.role === 'agent' ? 'agent' : 'user',
+          content: msg.content || '',
+          timestamp: new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          thinkingSteps: msg.thinking_steps || undefined,
+          toolCalls: msg.tool_calls || undefined,
+          proposal: msg.proposal || undefined,
+        }));
+        setMessages(loadedMsgs);
+      }
+    } catch (err) {
+      console.error('Failed to load chat session:', err);
+    }
+  };
 
 
   const handleSendMessage = async (text: string) => {
@@ -113,7 +162,7 @@ export const App: React.FC = () => {
 
     try {
       const { data, error } = await supabase.functions.invoke('agent-loop', {
-        body: { prompt: text }
+        body: { prompt: text, session_id: currentSessionId }
       });
 
       if (error) throw error;

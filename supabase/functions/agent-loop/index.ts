@@ -219,8 +219,9 @@ serve(async (req) => {
     const { data: { user }, error: userError } = await supabaseClient.auth.getUser()
     if (userError || !user) throw new Error('Unauthorized')
 
-    const { prompt } = await req.json()
+    const { prompt, session_id } = await req.json()
     if (!prompt) throw new Error('Prompt is required')
+    if (!session_id) throw new Error('session_id is required')
 
     // Fetch API Key
     const { data: settings } = await supabaseClient.from('user_settings').select('openrouter_key, preferred_model').eq('id', user.id).single()
@@ -232,9 +233,40 @@ serve(async (req) => {
     const openRouterKey = settings.openrouter_key
     const model = settings.preferred_model || 'google/gemini-3.6-flash'
 
+    // 1. Save the incoming user prompt
+    await supabaseClient.from('chat_messages').insert({
+      session_id,
+      user_id: user.id,
+      role: 'user',
+      content: prompt
+    })
+
+    // 2. Fetch past chat history for this session (last 10 messages)
+    const { data: pastMessages } = await supabaseClient
+      .from('chat_messages')
+      .select('role, content')
+      .eq('session_id', session_id)
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(10)
+
+    const history = (pastMessages || []).reverse().map(msg => ({
+      role: msg.role === 'agent' ? 'assistant' : 'user',
+      content: msg.content || ''
+    }))
+
+    // Build the initial conversation with history
     const messages: any[] = [
       { role: 'system', content: generateSystemPrompt(businessProfile) },
-      { role: 'user', content: prompt }
+      ...history,
+      { role: 'user', content: prompt } // the latest prompt is already in history, but we can append it directly if we exclude it from history, or we just rely on history.
+    ]
+    // Since we just inserted the user prompt, it will be in `history`. 
+    // Wait, let's just use `...history` which includes the prompt.
+    // Let's refine the messages array:
+    const finalMessages = [
+      { role: 'system', content: generateSystemPrompt(businessProfile) },
+      ...history
     ]
 
     const toolExecutions: any[] = []
@@ -259,7 +291,7 @@ serve(async (req) => {
         },
         body: JSON.stringify({
           model: model,
-          messages: messages,
+          messages: finalMessages,
           tools: AGENT_TOOLS,
           tool_choice: 'auto'
         })
@@ -269,7 +301,7 @@ serve(async (req) => {
 
       const aiData = await openRouterResponse.json()
       const assistantMessage = aiData.choices[0].message
-      messages.push(assistantMessage)
+      finalMessages.push(assistantMessage)
 
       if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
         for (const toolCall of assistantMessage.tool_calls) {
@@ -287,7 +319,7 @@ serve(async (req) => {
           } catch {}
 
           toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult.substring(0, 500), status: 'success' })
-          messages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResult })
+          finalMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResult })
         }
       } else {
         finalContent = assistantMessage.content || ''
@@ -300,6 +332,17 @@ serve(async (req) => {
       user_id: user.id,
       action: 'CONTEXTUAL_OODA_CYCLE',
       details: { prompt, model, iterations: toolExecutions.length, proposals: proposals.length }
+    })
+
+    // 3. Save the final agent response to history
+    await supabaseClient.from('chat_messages').insert({
+      session_id,
+      user_id: user.id,
+      role: 'agent',
+      content: finalContent,
+      thinking_steps: thinkingSteps,
+      tool_calls: toolExecutions,
+      proposal: proposals.length > 0 ? proposals[0] : null
     })
 
     return new Response(
