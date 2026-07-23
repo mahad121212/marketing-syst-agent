@@ -1,16 +1,43 @@
 import React, { useState, useEffect } from 'react';
-import { Key, ShieldCheck, Database, Check, Save, Zap } from 'lucide-react';
+import { Key, ShieldCheck, Database, Check, Save, Zap, Loader2 } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 
 interface SettingsModalProps {
   onSave: (settings: { metaToken: string; adAccountId: string; openRouterKey: string; preferredModel: string }) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ onSave }) => {
-  const [metaToken, setMetaToken] = useState('EAAG...MetaUserTokenMock');
-  const [adAccountId, setAdAccountId] = useState('act_849204918239');
+  const [metaToken, setMetaToken] = useState('');
+  const [adAccountId, setAdAccountId] = useState('');
   const [openRouterKey, setOpenRouterKey] = useState('');
   const [preferredModel, setPreferredModel] = useState('google/gemini-3.6-flash');
   const [saved, setSaved] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadSettings() {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          const { data, error } = await supabase
+            .from('user_settings')
+            .select('*')
+            .eq('id', session.user.id)
+            .single();
+            
+          if (data) {
+            if (data.openrouter_key) setOpenRouterKey(data.openrouter_key);
+            if (data.preferred_model) setPreferredModel(data.preferred_model);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load settings', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadSettings();
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -18,6 +45,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onSave }) => {
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
   };
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px', color: '#9ca3af' }}>
+        <Loader2 className="animate-spin" style={{ marginRight: '8px' }} />
+        <span>Loading settings...</span>
+      </div>
+    );
+  }
 
   return (
     <div style={{ padding: '28px', maxWidth: '700px' }}>
