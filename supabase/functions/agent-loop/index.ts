@@ -65,6 +65,22 @@ const AGENT_TOOLS = [
         required: ['hours_until_next_review', 'lock_goal_hours', 'goal_description']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'report_no_action',
+      description: 'Report that you reviewed a campaign, ad set, or ad and determined NO changes are needed. Use this to record your assessment. Doing nothing is a valid and professional decision if metrics are healthy or items are too young.',
+      parameters: {
+        type: 'object',
+        properties: {
+          target_id: { type: 'string', description: 'The UUID of the campaign, ad set, or ad.' },
+          target_level: { type: 'string', enum: ['campaign', 'ad_set', 'ad'], description: 'The level of the item.' },
+          reason: { type: 'string', description: 'Why no action is needed (e.g., "Performing well, ROAS is 4.2", "Too young, only 2 days old").' }
+        },
+        required: ['target_id', 'target_level', 'reason']
+      }
+    }
   }
 ]
 
@@ -93,13 +109,25 @@ BUSINESS CONTEXT:
 
 ${profileContext}
 
-## Your Reasoning Framework
-Do NOT use rigid if/else rules. You must reason conceptually:
-1. **Business Context**: A $50 CPA is terrible for a $20 product but excellent for a $500 product. Respect the Target CPA and ROAS above.
-2. **Market Context**: You are operating in ${businessProfile?.country || 'an unknown country'} using ${businessProfile?.currency || 'USD'}. Adjust your expectations for CPMs and Clicks accordingly.
-3. **Temporal Context**: Never judge a campaign that is too young. Meta requires time to exit the learning phase.
-4. **Hierarchy**: Analyze at the Ad Set and Ad levels. Don't pause an entire campaign if only one Ad Set is dragging it down.
-5. **Memory**: ALWAYS use the \`check_agent_memory\` tool before taking action to ensure you aren't repeating a decision you made 2 hours ago.
+## Temporal Discipline (CRITICAL)
+You MUST check the \`age_days\` of every item before reasoning about it.
+- **< 3 days old**: UNTOUCHABLE. Do NOT analyze, judge, or propose any change. Meta's learning phase needs at minimum 72 hours. Use \`report_no_action\`.
+- **3-7 days old**: OBSERVATION ONLY. Note trends but DO NOT propose changes unless metrics are catastrophically bad (e.g., 5x above target CPA).
+- **7-14 days old**: ACTIONABLE with caution. You have enough data to make informed decisions.
+- **> 14 days old**: FULLY ACTIONABLE. You have mature data to make confident scaling or pruning decisions.
+
+## Surgical Precision & Hierarchy
+- Analyze at the AD level first. If only 1 out of 3 ads in an ad set is underperforming, pause THAT AD — not the ad set.
+- If all ads in an ad set are bad, pause the AD SET — not the campaign.
+- Only recommend pausing a CAMPAIGN if ALL ad sets are performing poorly.
+
+## When to Do Nothing
+If a campaign, ad set, or ad is:
+- Performing within ±15% of target KPIs, OR
+- Less than 7 days old (with normal metrics), OR
+- Was already adjusted by you recently
+
+Then use \`report_no_action\`. This is the CORRECT and PROFESSIONAL response. Doing nothing IS a decision.
 
 ## Your Actions
 When you decide on an action, use \`propose_action_card\`.
@@ -121,12 +149,28 @@ async function executeTool(
 ): Promise<string> {
   switch (toolName) {
     case 'get_campaign_hierarchy': {
-      // In a real app, this would do a JOIN. For now, we query the tables we have.
       const { data: campaigns } = await supabaseClient.from('campaigns').select('*').eq('user_id', userId)
       const { data: adSets } = await supabaseClient.from('ad_sets').select('*').eq('user_id', userId)
       const { data: ads } = await supabaseClient.from('ads').select('*').eq('user_id', userId)
       
-      return JSON.stringify({ campaigns, adSets, ads })
+      const now = new Date().getTime()
+      const calcAge = (createdAt: string) => Math.max(0, Math.floor((now - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24)))
+
+      // Build nested hierarchy
+      const hierarchy = campaigns?.map((c: any) => ({
+        ...c,
+        age_days: calcAge(c.created_at),
+        ad_sets: adSets?.filter((s: any) => s.campaign_id === c.id).map((s: any) => ({
+          ...s,
+          age_days: calcAge(s.created_at),
+          ads: ads?.filter((a: any) => a.ad_set_id === s.id).map((a: any) => ({
+            ...a,
+            age_days: calcAge(a.created_at)
+          }))
+        }))
+      }))
+
+      return JSON.stringify({ hierarchy })
     }
 
     case 'check_agent_memory': {
@@ -138,7 +182,26 @@ async function executeTool(
         .order('created_at', { ascending: false })
         .limit(3)
       if (error) return JSON.stringify({ error: error.message })
-      return JSON.stringify(data.length > 0 ? data : { note: "No previous memory for this target." })
+      return JSON.stringify(data && data.length > 0 ? data : { note: "No previous memory for this target." })
+    }
+
+    case 'report_no_action': {
+      const { data, error } = await supabaseClient
+        .from('agent_memory')
+        .insert({
+          user_id: userId,
+          campaign_id: toolArgs.target_id,
+          decision_made: `NO ACTION (${toolArgs.target_level})`,
+          reasoning_snapshot: toolArgs.reason
+        })
+        .select()
+        .single()
+
+      if (error) return JSON.stringify({ error: error.message })
+      return JSON.stringify({
+        success: true,
+        message: `Logged NO ACTION decision for ${toolArgs.target_level}. Reasoning: ${toolArgs.reason}`
+      })
     }
 
     case 'propose_action_card': {
