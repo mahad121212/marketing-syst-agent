@@ -86,6 +86,11 @@ export const AgentChat: React.FC<AgentChatProps> = ({
     loadGoalSchedules();
   };
 
+  const getLiveGoalStatus = (goalId: string, fallback: string) => {
+    const goal = goalSchedules.find(g => g.id === goalId);
+    return goal ? goal.status : fallback;
+  };
+
   const formatSessionDate = (dateStr: string) => {
     const d = new Date(dateStr);
     const now = new Date();
@@ -359,8 +364,8 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
                         <Target style={{ width: '18px', height: '18px', color: '#c084fc' }} />
                         <h4 style={{ margin: 0, fontSize: '15px', fontWeight: 700, color: '#ffffff' }}>Goal Schedule Proposed</h4>
-                        <span style={{ marginLeft: 'auto', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', backgroundColor: msg.proposal.card.status === 'ACTIVE' ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)', color: msg.proposal.card.status === 'ACTIVE' ? '#34d399' : '#fbbf24', fontWeight: 700 }}>
-                          {msg.proposal.card.status}
+                        <span style={{ marginLeft: 'auto', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', backgroundColor: getLiveGoalStatus(msg.proposal.card.id, msg.proposal.card.status) === 'ACTIVE' ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)', color: getLiveGoalStatus(msg.proposal.card.id, msg.proposal.card.status) === 'ACTIVE' ? '#34d399' : '#fbbf24', fontWeight: 700 }}>
+                          {getLiveGoalStatus(msg.proposal.card.id, msg.proposal.card.status)}
                         </span>
                       </div>
                       <div style={{ fontSize: '13px', color: '#d1d5db', marginBottom: '10px', lineHeight: '1.5' }}>
@@ -370,7 +375,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                         <div><span style={{ color: '#6b7280' }}>Target Level:</span> <span style={{ color: '#e5e7eb', fontWeight: 600 }}>{msg.proposal.card.target_level}</span></div>
                         <div><span style={{ color: '#6b7280' }}>Next Run:</span> <span style={{ color: '#38bdf8', fontWeight: 600 }}>{new Date(msg.proposal.card.next_run_at).toLocaleString()}</span></div>
                       </div>
-                      {msg.proposal.card.status === 'PENDING_APPROVAL' && (
+                      {getLiveGoalStatus(msg.proposal.card.id, msg.proposal.card.status) === 'PENDING_APPROVAL' && (
                         <div style={{ display: 'flex', gap: '10px' }}>
                           <button onClick={() => handleApproveGoal(msg.proposal!.card.id)} style={{ flex: 1, backgroundColor: '#10b981', color: '#fff', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: 700, fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
                             <CheckCircle2 style={{ width: '14px', height: '14px' }} /> Approve Schedule
