@@ -117,23 +117,37 @@ export const App: React.FC = () => {
       if (error) throw error;
 
       const agentMsgId = `agt-${Date.now()}`;
-      
-      // Parse if the agent returned a tool_calls or proposal block
-      // For now, we will handle the pure LLM response text
-      let agentResponseContent = data.response || "No response received.";
-      let proposalObj = undefined;
-      let thinkingSteps = ['Connected to Supabase Edge Function', 'Executing OpenRouter API call...'];
 
-      // Quick parser to mock a proposal if the agent mentions "budget" (Temporary until we implement strict JSON schemas)
-      if (text.toLowerCase().includes('budget') || text.toLowerCase().includes('launch')) {
-        proposalObj = {
-          campaignName: 'AI Autonomous Scale - Broad Hook',
-          budget: 120,
-          objective: 'CONVERSIONS',
-          suggestedCopy: 'Unlock radiant skincare backed by science. Experience 24-hour hydration without heavy oils. Order today & enjoy free shipping!',
-          targetAudience: 'Broad Women 22-50 + Interest: Clean Beauty',
-        };
-        thinkingSteps.push('Identified budget parameter. Generated Strategy Proposal.');
+      // Parse the full OODA loop response from the Edge Function
+      const agentResponseContent = data.response || 'No response received.';
+      const thinkingSteps = data.thinkingSteps || [];
+      const toolCalls = (data.toolCalls || []).map((tc: any) => ({
+        name: tc.name,
+        args: tc.args,
+        status: tc.status || 'success',
+      }));
+
+      // Parse proposals from the Edge Function
+      let proposalObj = undefined;
+      if (data.proposals && data.proposals.length > 0) {
+        const p = data.proposals[0];
+        if (p.type === 'CAMPAIGN_CREATED') {
+          proposalObj = {
+            campaignName: p.campaign?.name || 'New Campaign',
+            budget: p.campaign?.daily_budget || 0,
+            objective: p.objective || 'CONVERSIONS',
+            suggestedCopy: p.suggested_ad_copy || '',
+            targetAudience: JSON.stringify(p.campaign?.targeting || {}),
+          };
+        } else if (p.type === 'PROPOSAL') {
+          proposalObj = {
+            campaignName: p.campaign_name || 'Campaign Adjustment',
+            budget: p.new_daily_budget || 0,
+            objective: p.action || 'ADJUSTMENT',
+            suggestedCopy: `${p.reasoning}\n\nExpected Impact: ${p.expected_impact}`,
+            targetAudience: p.action,
+          };
+        }
       }
 
       const agentResponse: AgentMessage = {
@@ -141,7 +155,8 @@ export const App: React.FC = () => {
         sender: 'agent',
         content: agentResponseContent,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        thinkingSteps: thinkingSteps,
+        thinkingSteps,
+        toolCalls,
         proposal: proposalObj,
       };
 
