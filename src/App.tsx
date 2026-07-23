@@ -19,6 +19,7 @@ export const App: React.FC = () => {
   const [isAgentRunning, setIsAgentRunning] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [chatSessions, setChatSessions] = useState<{ id: string; title: string; updated_at: string }[]>([]);
 
   // Initial Mock Campaigns
   const [campaigns, setCampaigns] = useState<Campaign[]>([
@@ -94,33 +95,40 @@ export const App: React.FC = () => {
 
   const loadOrCreateSession = async (userId: string) => {
     try {
-      // Find most recent session
-      const { data: sessions, error: sessionErr } = await supabase
+      // Load ALL sessions for the sidebar
+      const { data: allSessions, error: sessionErr } = await supabase
         .from('chat_sessions')
         .select('*')
         .eq('user_id', userId)
-        .order('updated_at', { ascending: false })
-        .limit(1);
+        .order('updated_at', { ascending: false });
 
       if (sessionErr) throw sessionErr;
 
       let sessionId = null;
-      if (sessions && sessions.length > 0) {
-        sessionId = sessions[0].id;
+      if (allSessions && allSessions.length > 0) {
+        setChatSessions(allSessions);
+        sessionId = allSessions[0].id;
       } else {
-        // Create new session
+        // Create first session
         const { data: newSession, error: createErr } = await supabase
           .from('chat_sessions')
-          .insert({ user_id: userId, title: 'Main Chat' })
+          .insert({ user_id: userId, title: 'New Chat' })
           .select()
           .single();
         if (createErr) throw createErr;
         sessionId = newSession.id;
+        setChatSessions([newSession]);
       }
 
       setCurrentSessionId(sessionId);
+      await loadMessagesForSession(sessionId);
+    } catch (err) {
+      console.error('Failed to load chat session:', err);
+    }
+  };
 
-      // Load messages
+  const loadMessagesForSession = async (sessionId: string) => {
+    try {
       const { data: chatMsgs, error: msgsErr } = await supabase
         .from('chat_messages')
         .select('*')
@@ -129,7 +137,7 @@ export const App: React.FC = () => {
 
       if (msgsErr) throw msgsErr;
 
-      if (chatMsgs) {
+      if (chatMsgs && chatMsgs.length > 0) {
         const loadedMsgs: AgentMessage[] = chatMsgs.map((msg: any) => ({
           id: msg.id,
           sender: msg.role === 'agent' ? 'agent' : 'user',
@@ -140,9 +148,53 @@ export const App: React.FC = () => {
           proposal: msg.proposal || undefined,
         }));
         setMessages(loadedMsgs);
+      } else {
+        setMessages([]);
       }
     } catch (err) {
-      console.error('Failed to load chat session:', err);
+      console.error('Failed to load messages:', err);
+      setMessages([]);
+    }
+  };
+
+  const handleNewChat = async () => {
+    if (!session) return;
+    try {
+      const { data: newSession, error } = await supabase
+        .from('chat_sessions')
+        .insert({ user_id: session.user.id, title: 'New Chat' })
+        .select()
+        .single();
+      if (error) throw error;
+      setChatSessions((prev) => [newSession, ...prev]);
+      setCurrentSessionId(newSession.id);
+      setMessages([]);
+    } catch (err) {
+      console.error('Failed to create new chat:', err);
+    }
+  };
+
+  const handleSwitchSession = async (sessionId: string) => {
+    setCurrentSessionId(sessionId);
+    await loadMessagesForSession(sessionId);
+  };
+
+  const handleDeleteSession = async (sessionId: string) => {
+    if (!session) return;
+    try {
+      await supabase.from('chat_messages').delete().eq('session_id', sessionId);
+      await supabase.from('chat_sessions').delete().eq('id', sessionId);
+      const remaining = chatSessions.filter((s) => s.id !== sessionId);
+      setChatSessions(remaining);
+      if (currentSessionId === sessionId && remaining.length > 0) {
+        setCurrentSessionId(remaining[0].id);
+        await loadMessagesForSession(remaining[0].id);
+      } else if (remaining.length === 0) {
+        // Create a fresh session
+        handleNewChat();
+      }
+    } catch (err) {
+      console.error('Failed to delete chat session:', err);
     }
   };
 
@@ -159,6 +211,13 @@ export const App: React.FC = () => {
     setMessages((prev) => [...prev, newMsg]);
     setIsProcessing(true);
     setIsAgentRunning(true);
+
+    // Auto-rename session title from "New Chat" to a preview of the first message
+    if (messages.length === 0 && currentSessionId) {
+      const title = text.length > 40 ? text.substring(0, 40) + '...' : text;
+      await supabase.from('chat_sessions').update({ title }).eq('id', currentSessionId);
+      setChatSessions((prev) => prev.map((s) => s.id === currentSessionId ? { ...s, title } : s));
+    }
 
     try {
       const { data, error } = await supabase.functions.invoke('agent-loop', {
@@ -224,6 +283,14 @@ export const App: React.FC = () => {
     } finally {
       setIsProcessing(false);
       setIsAgentRunning(false);
+      // Update session timestamp in sidebar
+      if (currentSessionId) {
+        const now = new Date().toISOString();
+        setChatSessions((prev) =>
+          prev.map((s) => s.id === currentSessionId ? { ...s, updated_at: now } : s)
+              .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+        );
+      }
     }
   };
 
@@ -309,6 +376,11 @@ export const App: React.FC = () => {
               onSendMessage={handleSendMessage}
               onApproveProposal={handleApproveProposal}
               isProcessing={isProcessing}
+              sessions={chatSessions}
+              currentSessionId={currentSessionId}
+              onNewChat={handleNewChat}
+              onSwitchSession={handleSwitchSession}
+              onDeleteSession={handleDeleteSession}
             />
           )}
           {activeTab === 'campaigns' && (

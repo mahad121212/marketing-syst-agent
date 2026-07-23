@@ -256,16 +256,8 @@ serve(async (req) => {
       content: msg.content || ''
     }))
 
-    // Build the initial conversation with history
-    const messages: any[] = [
-      { role: 'system', content: generateSystemPrompt(businessProfile) },
-      ...history,
-      { role: 'user', content: prompt } // the latest prompt is already in history, but we can append it directly if we exclude it from history, or we just rely on history.
-    ]
-    // Since we just inserted the user prompt, it will be in `history`. 
-    // Wait, let's just use `...history` which includes the prompt.
-    // Let's refine the messages array:
-    const finalMessages = [
+    // Build the conversation array: system prompt + chat history
+    const finalMessages: any[] = [
       { role: 'system', content: generateSystemPrompt(businessProfile) },
       ...history
     ]
