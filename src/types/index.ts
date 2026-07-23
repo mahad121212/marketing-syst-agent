@@ -26,11 +26,13 @@ export interface AgentMessage {
     result?: string;
   }[];
   proposal?: {
-    campaignName: string;
-    budget: number;
-    objective: string;
-    suggestedCopy: string;
-    targetAudience: string;
+    type?: string;
+    card?: any;
+    campaignName?: string;
+    budget?: number;
+    objective?: string;
+    suggestedCopy?: string;
+    targetAudience?: string;
   };
 }
 
