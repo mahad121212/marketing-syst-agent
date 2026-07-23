@@ -233,7 +233,10 @@ export const App: React.FC = () => {
             />
           )}
           {activeTab === 'settings' && (
-            <SettingsModal onSave={() => {}} />
+            <SettingsModal onSave={(settings) => {
+              console.log('Saving settings to Supabase...', settings);
+              // TODO: Implement actual Supabase save logic when Auth is ready
+            }} />
           )}
           {activeTab === 'analytics' && (
             <Dashboard campaigns={campaigns} onTriggerAgentAnalysis={handleTriggerInstantAudit} />

@@ -1,18 +1,20 @@
-import React, { useState } from 'react';
-import { Key, ShieldCheck, Database, Check, Save } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Key, ShieldCheck, Database, Check, Save, Zap } from 'lucide-react';
 
 interface SettingsModalProps {
-  onSave: (metaToken: string, adAccountId: string) => void;
+  onSave: (settings: { metaToken: string; adAccountId: string; openRouterKey: string; preferredModel: string }) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ onSave }) => {
   const [metaToken, setMetaToken] = useState('EAAG...MetaUserTokenMock');
   const [adAccountId, setAdAccountId] = useState('act_849204918239');
+  const [openRouterKey, setOpenRouterKey] = useState('');
+  const [preferredModel, setPreferredModel] = useState('google/gemini-3.6-flash');
   const [saved, setSaved] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSave(metaToken, adAccountId);
+    onSave({ metaToken, adAccountId, openRouterKey, preferredModel });
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
   };
@@ -20,14 +22,74 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onSave }) => {
   return (
     <div style={{ padding: '28px', maxWidth: '700px' }}>
       <div style={{ marginBottom: '24px' }}>
-        <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 700, color: '#f3f4f6' }}>Meta API & Credentials Settings</h2>
+        <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 700, color: '#f3f4f6' }}>Agent Settings & Credentials</h2>
         <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#9ca3af' }}>
-          Connect your Meta Ads Account or System User Token for live deployment.
+          Configure your LLM provider and Meta API credentials for autonomous operation.
         </p>
       </div>
 
       <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        {/* LLM Settings Section */}
         <div className="glass-panel" style={{ padding: '24px', borderRadius: '14px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#06b6d4', marginBottom: '8px' }}>
+            <Zap style={{ width: '18px', height: '18px' }} />
+            <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 600 }}>LLM Intelligence (OpenRouter)</h3>
+          </div>
+          
+          <div>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#d1d5db', marginBottom: '8px' }}>
+              OpenRouter API Key
+            </label>
+            <input
+              type="password"
+              value={openRouterKey}
+              onChange={(e) => setOpenRouterKey(e.target.value)}
+              placeholder="sk-or-v1-..."
+              style={{
+                width: '100%',
+                backgroundColor: '#111827',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+                borderRadius: '8px',
+                padding: '10px 14px',
+                color: '#f3f4f6',
+                fontSize: '14px',
+                boxSizing: 'border-box',
+              }}
+            />
+          </div>
+
+          <div>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#d1d5db', marginBottom: '8px' }}>
+              Agent Reasoning Model
+            </label>
+            <select
+              value={preferredModel}
+              onChange={(e) => setPreferredModel(e.target.value)}
+              style={{
+                width: '100%',
+                backgroundColor: '#111827',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+                borderRadius: '8px',
+                padding: '10px 14px',
+                color: '#f3f4f6',
+                fontSize: '14px',
+                boxSizing: 'border-box',
+                cursor: 'pointer'
+              }}
+            >
+              <option value="openai/gpt-4o-mini">OpenAI: GPT-4o Mini (Fast/Efficient)</option>
+              <option value="google/gemini-3.6-flash">Google: Gemini 3.6 Flash (Recommended)</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Meta Settings Section */}
+        <div className="glass-panel" style={{ padding: '24px', borderRadius: '14px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#10b981', marginBottom: '8px' }}>
+            <Database style={{ width: '18px', height: '18px' }} />
+            <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 600 }}>Meta Ads Sandbox Connection</h3>
+          </div>
+
           <div>
             <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#d1d5db', marginBottom: '8px' }}>
               Meta Ad Account ID
@@ -94,12 +156,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onSave }) => {
             justifyContent: 'center',
             gap: '8px',
             alignSelf: 'flex-start',
+            transition: 'background-color 0.2s',
           }}
+          onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#0891b2'}
+          onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#06b6d4'}
         >
           {saved ? <Check style={{ width: '16px', height: '16px' }} /> : <Save style={{ width: '16px', height: '16px' }} />}
-          <span>{saved ? 'Settings Saved' : 'Save Connection Credentials'}</span>
+          <span>{saved ? 'Settings Saved to Supabase' : 'Save Connection Credentials'}</span>
         </button>
       </form>
     </div>
   );
 };
+
