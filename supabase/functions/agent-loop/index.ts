@@ -232,6 +232,11 @@ async function executeTool(
     }
 
     case 'report_no_action': {
+      const { data, error } = await supabaseClient
+        .from('agent_memory')
+        .insert({
+          user_id: userId,
+          campaign_id: toolArgs.target_id,
           decision_made: 'NO ACTION (' + toolArgs.target_level + ')',
           reasoning_snapshot: toolArgs.reason
         })
