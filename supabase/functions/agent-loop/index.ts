@@ -61,10 +61,23 @@ const AGENT_TOOLS = [
           target_id: { type: 'string', description: 'The UUID of the campaign, ad set, or ad you want to monitor.' },
           target_level: { type: 'string', enum: ['campaign', 'ad_set', 'ad', 'account'], description: 'The level of the target.' },
           hours_until_next_review: { type: 'number', description: 'How many hours from now to wake up (minimum 4).' },
-          goal_description: { type: 'string', description: 'What are you monitoring? e.g., "Maintain CPA under $30 for Campaign X".' },
-          current_metrics_snapshot: { type: 'object', description: 'JSON object summarizing the current performance metrics of the target. This provides historical context for your next wake-up.' }
+          goal_description: { type: 'string', description: 'What are you monitoring? e.g., "Maintain CPA under $30 for Campaign X".' }
         },
-        required: ['target_id', 'target_level', 'hours_until_next_review', 'goal_description', 'current_metrics_snapshot']
+        required: ['target_id', 'target_level', 'hours_until_next_review', 'goal_description']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_state_snapshots',
+      description: 'Fetches the historical state and metrics timeline (up to the 10 most recent snapshots) for a specific campaign, ad set, or ad. Snapshots are taken every 12 hours. Use this to analyze trends, stability, and growth over a 5-day period before making critical optimization decisions.',
+      parameters: {
+        type: 'object',
+        properties: {
+          target_id: { type: 'string', description: 'The UUID of the campaign, ad set, or ad.' }
+        },
+        required: ['target_id']
       }
     }
   },
@@ -191,6 +204,21 @@ async function executeTool(
       return JSON.stringify({ hierarchy })
     }
 
+    case 'get_state_snapshots': {
+      const { target_id } = toolArgs;
+      const { data, error } = await supabaseClient
+        .from('metrics_snapshots')
+        .select('*')
+        .eq('target_id', target_id)
+        .order('created_at', { ascending: false })
+        .limit(10);
+      
+      if (error) {
+        return JSON.stringify({ error: error.message });
+      }
+      return JSON.stringify(data || []);
+    }
+
     case 'check_agent_memory': {
       const { data, error } = await supabaseClient
         .from('agent_memory')
@@ -204,12 +232,7 @@ async function executeTool(
     }
 
     case 'report_no_action': {
-      const { data, error } = await supabaseClient
-        .from('agent_memory')
-        .insert({
-          user_id: userId,
-          campaign_id: toolArgs.target_id,
-          decision_made: `NO ACTION (${toolArgs.target_level})`,
+          decision_made: 'NO ACTION (' + toolArgs.target_level + ')',
           reasoning_snapshot: toolArgs.reason
         })
         .select()
@@ -218,7 +241,7 @@ async function executeTool(
       if (error) return JSON.stringify({ error: error.message })
       return JSON.stringify({
         success: true,
-        message: `Logged NO ACTION decision for ${toolArgs.target_level}. Reasoning: ${toolArgs.reason}`
+        message: 'Logged NO ACTION decision for ' + toolArgs.target_level + '. Reasoning: ' + toolArgs.reason
       })
     }
 
@@ -243,14 +266,14 @@ async function executeTool(
       await supabaseClient.from('agent_memory').insert({
         user_id: userId,
         campaign_id: toolArgs.target_id,
-        decision_made: `Proposed ${toolArgs.action_type}`,
+        decision_made: 'Proposed ' + toolArgs.action_type,
         reasoning_snapshot: toolArgs.reasoning
       })
 
       return JSON.stringify({
         type: 'PROPOSAL',
         card: data,
-        message: `Action Card generated with ${toolArgs.priority} priority and sent to Action Center.`
+        message: 'Action Card generated with ' + toolArgs.priority + ' priority and sent to Action Center.'
       })
     }
 
@@ -283,7 +306,7 @@ async function executeTool(
         type: 'GOAL_PROPOSAL', 
         card: data, 
         success: true, 
-        message: isBackground ? `Recurring Goal automatically scheduled for next execution at ${nextReview.toISOString()}.` : `Goal Schedule proposed for ${toolArgs.target_level} and sent to user for approval.`
+        message: isBackground ? 'Recurring Goal automatically scheduled for next execution at ' + nextReview.toISOString() + '.' : 'Goal Schedule proposed for ' + toolArgs.target_level + ' and sent to user for approval.'
       })
     }
 
@@ -324,14 +347,13 @@ serve(async (req) => {
     const openRouterKey = settings.openrouter_key
     const model = settings.preferred_model || 'google/gemini-3.6-flash'
 
-    // 1. Save the incoming user prompt
     const { error: userMsgErr } = await supabaseClient.from('chat_messages').insert({
       session_id,
       user_id: user.id,
       role: 'user',
       content: prompt
     })
-    if (userMsgErr) throw new Error(`Failed to save user message: ${userMsgErr.message}`)
+    if (userMsgErr) throw new Error('Failed to save user message: ' + userMsgErr.message)
 
     // 2. Fetch past chat history for this session (last 10 messages)
     const { data: pastMessages } = await supabaseClient
@@ -356,19 +378,19 @@ serve(async (req) => {
     const toolExecutions: any[] = []
     const thinkingSteps: string[] = ['Initializing Context-Aware OODA Loop...']
     if (!businessProfile) thinkingSteps.push('WARNING: No Business Profile found. Agent is running without context.')
-    else thinkingSteps.push(`Loaded Business Profile: ${businessProfile.business_name} (${businessProfile.country})`)
+    else thinkingSteps.push('Loaded Business Profile: ' + businessProfile.business_name + ' (' + businessProfile.country + ')')
 
     let proposals: any[] = []
     const MAX_ITERATIONS = 6
     let finalContent = ''
 
     for (let i = 0; i < MAX_ITERATIONS; i++) {
-      thinkingSteps.push(`Iteration ${i + 1}: Reasoning with ${model}...`)
+      thinkingSteps.push('Iteration ' + (i + 1) + ': Reasoning with ' + model + '...')
 
       const openRouterResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${openRouterKey}`,
+          'Authorization': 'Bearer ' + openRouterKey,
           'Content-Type': 'application/json',
           'HTTP-Referer': 'https://metaagent.ai',
           'X-Title': 'MetaAgent AI'
@@ -381,7 +403,7 @@ serve(async (req) => {
         })
       })
 
-      if (!openRouterResponse.ok) throw new Error(`OpenRouter Error: ${await openRouterResponse.text()}`)
+      if (!openRouterResponse.ok) throw new Error('OpenRouter Error: ' + await openRouterResponse.text())
 
       const aiData = await openRouterResponse.json()
       const assistantMessage = aiData.choices[0].message
@@ -393,7 +415,7 @@ serve(async (req) => {
           let toolArgs = {}
           try { toolArgs = JSON.parse(toolCall.function.arguments || '{}') } catch {}
 
-          thinkingSteps.push(`Executing Tool: ${toolName}`)
+          thinkingSteps.push('Executing Tool: ' + toolName)
 
           const toolResult = await executeTool(toolName, toolArgs, supabaseClient, user.id, session_id, !!is_background)
 
@@ -428,7 +450,7 @@ serve(async (req) => {
       tool_calls: toolExecutions,
       proposal: proposals.length > 0 ? proposals[0] : null
     })
-    if (agentMsgErr) throw new Error(`Failed to save agent message: ${agentMsgErr.message}`)
+    if (agentMsgErr) throw new Error('Failed to save agent message: ' + agentMsgErr.message)
 
     return new Response(
       JSON.stringify({ response: finalContent, thinkingSteps, toolCalls: toolExecutions, proposals }),

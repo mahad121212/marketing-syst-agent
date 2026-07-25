@@ -56,10 +56,23 @@ const AGENT_TOOLS = [
           target_id: { type: 'string', description: 'The UUID of the campaign, ad set, or ad you want to monitor.' },
           target_level: { type: 'string', enum: ['campaign', 'ad_set', 'ad', 'account'], description: 'The level of the target.' },
           hours_until_next_review: { type: 'number', description: 'How many hours from now to wake up (minimum 4).' },
-          goal_description: { type: 'string', description: 'What are you monitoring?' },
-          current_metrics_snapshot: { type: 'object', description: 'JSON object summarizing current performance metrics.' }
+          goal_description: { type: 'string', description: 'What are you monitoring?' }
         },
-        required: ['target_id', 'target_level', 'hours_until_next_review', 'goal_description', 'current_metrics_snapshot']
+        required: ['target_id', 'target_level', 'hours_until_next_review', 'goal_description']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_state_snapshots',
+      description: 'Fetches the historical state and metrics timeline (up to the 10 most recent snapshots) for a specific campaign, ad set, or ad. Snapshots are taken every 12 hours. Use this to analyze trends, stability, and growth over a 5-day period before making critical optimization decisions.',
+      parameters: {
+        type: 'object',
+        properties: {
+          target_id: { type: 'string', description: 'The UUID of the campaign, ad set, or ad.' }
+        },
+        required: ['target_id']
       }
     }
   },
@@ -110,10 +123,11 @@ function generateSystemPrompt(businessProfile: any, historical_context: string) 
     '## Anti-Sycophancy',
     'You must evaluate every item strictly according to its age_days and performance_metrics.',
     '',
-    '## Your Actions',
-    'When you decide on an action, use propose_action_card.',
-    'If no action is needed, use report_no_action.',
-    'You MUST use set_goal_schedule at the end to schedule your NEXT wake-up to keep the recurring loop alive.',
+    '## Your OODA Loop:',
+    '1. OBSERVE: You are provided the target ID. Use `get_state_snapshots` to view its 5-day historical performance timeline.',
+    '2. ORIENT: Is this actually a problem or just normal variance? Look at the trendline over multiple snapshots.',
+    '3. DECIDE: Do nothing (`report_no_action`), tweak (`propose_action_card`), or set a future wake up (`set_goal_schedule`).',
+    '4. ACT: Execute the exact tool.',
     '',
     '## Background Context',
     'BACKGROUND WAKE-UP: You have been woken up to monitor a recurring goal.',
@@ -154,6 +168,21 @@ async function executeTool(
       return JSON.stringify({ hierarchy })
     }
 
+    case 'get_state_snapshots': {
+      const { target_id } = toolArgs;
+      const { data, error } = await supabaseClient
+        .from('metrics_snapshots')
+        .select('*')
+        .eq('target_id', target_id)
+        .order('created_at', { ascending: false })
+        .limit(10);
+      
+      if (error) {
+        return JSON.stringify({ error: error.message });
+      }
+      return JSON.stringify(data || []);
+    }
+
     case 'check_agent_memory': {
       const { data, error } = await supabaseClient.from('agent_memory').select('*').eq('campaign_id', toolArgs.target_id).eq('user_id', userId).order('created_at', { ascending: false }).limit(3)
       if (error) return JSON.stringify({ error: error.message })
@@ -168,7 +197,7 @@ async function executeTool(
         reasoning_snapshot: toolArgs.reason
       })
       if (error) return JSON.stringify({ error: error.message })
-      return JSON.stringify({ success: true, message: 'Logged NO ACTION decision for ' + toolArgs.target_level + '.' })
+      return JSON.stringify({ success: true, message: 'Logged NO ACTION decision for ' + toolArgs.target_level + '. Reasoning: ' + toolArgs.reason })
     }
 
     case 'propose_action_card': {
@@ -191,7 +220,7 @@ async function executeTool(
         reasoning_snapshot: toolArgs.reasoning
       })
 
-      return JSON.stringify({ type: 'PROPOSAL', card: data, message: 'Action Card generated.' })
+      return JSON.stringify({ type: 'PROPOSAL', card: data, message: 'Action Card generated with ' + toolArgs.priority + ' priority and sent to Action Center.' })
     }
 
     case 'set_goal_schedule': {
@@ -216,7 +245,7 @@ async function executeTool(
         type: 'GOAL_PROPOSAL', 
         card: data, 
         success: true, 
-        message: 'Recurring Goal automatically scheduled for next execution at ' + nextReview.toISOString() + '.'
+        message: isBackground ? 'Recurring Goal automatically scheduled for next execution at ' + nextReview.toISOString() + '.' : 'Goal Schedule proposed for ' + toolArgs.target_level + ' and sent to user for approval.'
       })
     }
 
@@ -261,11 +290,10 @@ serve(async (req) => {
       const openRouterKey = settings.openrouter_key
       const model = settings.preferred_model || 'google/gemini-3.6-flash'
       
-      const promptContext = JSON.stringify(goal.metrics_snapshot || {})
-      const prompt = 'BACKGROUND TASK WAKE-UP: Please execute the goal "' + goal.goal_description + '". Target is ' + goal.target_level + ' ' + goal.target_id + '.'
+      const prompt = 'BACKGROUND TASK WAKE-UP: Please execute the goal "' + goal.goal_description + '". Target is ' + goal.target_level + ' ' + goal.target_id + '. Use your get_state_snapshots tool to pull the recent timeline data for this target, then make a decision.'
 
       const finalMessages: any[] = [
-        { role: 'system', content: generateSystemPrompt(businessProfile, promptContext) },
+        { role: 'system', content: generateSystemPrompt(businessProfile, '') },
         { role: 'user', content: prompt }
       ]
 
@@ -308,7 +336,7 @@ serve(async (req) => {
 
             thinkingSteps.push('Executing Tool: ' + toolName)
 
-            const toolResult = await executeTool(toolName, toolArgs, supabaseClient, goal.user_id, goal.session_id)
+            const toolResult = await executeTool(toolName, toolArgs, supabaseClient, goal.user_id, goal.session_id, true)
 
             try {
               const parsed = JSON.parse(toolResult)
@@ -326,16 +354,17 @@ serve(async (req) => {
       }
 
       // Inject the background message into the original chat session
-      await supabaseClient.from('chat_messages').insert({
+      const { error: agentMsgErr } = await supabaseClient.from('chat_messages').insert({
         session_id: goal.session_id,
         user_id: goal.user_id,
         role: 'agent',
-        content: '**(BACKGROUND TASK)** ' + finalContent,
+        content: finalContent,
         thinking_steps: thinkingSteps,
         tool_calls: toolExecutions,
         proposal: proposals.length > 0 ? proposals[0] : null
       })
-      
+      if (agentMsgErr) throw new Error('Failed to save background agent message: ' + agentMsgErr.message)
+
       // Update chat session timestamp so sidebar picks up the unread badge
       await supabaseClient.from('chat_sessions').update({ updated_at: new Date().toISOString() }).eq('id', goal.session_id)
       
