@@ -232,7 +232,7 @@ When you decide on an action, use \`propose_action_card\`.
 - Priority MANDATORY: Critical account failures, massive budget changes, or things that definitively require human eyes.
 
 When the user asks you to monitor or maintain a goal, use \`set_goal_schedule\` to plan your next automated wake-up.
-If you are woken up in the background by a Cron Job, you MUST use \`set_goal_schedule\` at the end of your evaluation to schedule your NEXT wake-up to keep the recurring loop alive.
+If you are woken up in the background by a Cron Job, you must evaluate if the target requires continued monitoring. If yes, you MUST call \`set_goal_schedule\` to reschedule the monitoring task for a future time. If the campaign has stabilized or you decided no further checks are needed, do not reschedule (it is perfectly fine to do nothing). You decide the gap (minimum 1 minute, use 0.016 hours for testing).
 
 ## Background Context
 ${historical_context ? `BACKGROUND WAKE-UP: You have been woken up to monitor a recurring goal.
@@ -364,6 +364,11 @@ async function executeTool(
       // If background, auto-approve the recurrence. If not, it needs user approval.
       const status = isBackground ? 'ACTIVE' : 'PENDING_APPROVAL'
 
+      let desc = toolArgs.goal_description || '';
+      if (isBackground && !desc.startsWith('[Agent Rescheduled] ')) {
+        desc = '[Agent Rescheduled] ' + desc;
+      }
+
       const { data, error } = await supabaseClient
         .from('goal_schedules')
         .insert({
@@ -371,8 +376,8 @@ async function executeTool(
           session_id: sessionId,
           target_id: toolArgs.target_id,
           target_level: toolArgs.target_level,
-          goal_description: toolArgs.goal_description,
-          metrics_snapshot: toolArgs.current_metrics_snapshot,
+          goal_description: desc,
+          metrics_snapshot: toolArgs.current_metrics_snapshot || null,
           next_run_at: nextReview.toISOString(),
           status: status
         })

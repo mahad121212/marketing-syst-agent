@@ -139,6 +139,7 @@ function generateSystemPrompt(businessProfile: any, historical_context: string) 
     '1. OBSERVE: You are provided the target ID. Use `get_state_snapshots` to view its 5-day historical performance timeline.',
     '2. ORIENT: Is this actually a problem or just normal variance? Look at the trendline over multiple snapshots.',
     '3. DECIDE: Do nothing (`report_no_action`), tweak (`propose_action_card`), or set a future wake up (`set_goal_schedule`).',
+    '   - Autonomous Rescheduling: After reviewing a background goal, evaluate if the campaign/target requires further checking. If yes, you must call `set_goal_schedule` to schedule a future check. If the campaign has stabilized or you decided no further checks are needed, do not reschedule (it is perfectly fine to do nothing). You decide the gap (minimum 1 minute, use 0.016 hours for testing).',
     '4. ACT: Execute the exact tool.',
     '',
     '## Background Context',
@@ -245,13 +246,18 @@ async function executeTool(
       const now = new Date()
       const nextReview = new Date(now.getTime() + reviewHours * 60 * 60 * 1000)
 
+      let desc = toolArgs.goal_description || '';
+      if (isBackground && !desc.startsWith('[Agent Rescheduled] ')) {
+        desc = '[Agent Rescheduled] ' + desc;
+      }
+
       const { data, error } = await supabaseClient.from('goal_schedules').insert({
         user_id: userId,
         session_id: sessionId,
         target_id: toolArgs.target_id,
         target_level: toolArgs.target_level,
-        goal_description: toolArgs.goal_description,
-        metrics_snapshot: toolArgs.current_metrics_snapshot,
+        goal_description: desc,
+        metrics_snapshot: toolArgs.current_metrics_snapshot || null,
         next_run_at: nextReview.toISOString(),
         status: 'ACTIVE'
       }).select().single()
@@ -262,7 +268,7 @@ async function executeTool(
         type: 'GOAL_PROPOSAL', 
         card: data, 
         success: true, 
-        message: isBackground ? 'Recurring Goal automatically scheduled for next execution at ' + nextReview.toISOString() + '.' : 'Goal Schedule proposed for ' + toolArgs.target_level + ' and sent to user for approval.'
+        message: isBackground ? 'Recurring Goal automatically rescheduled for next execution at ' + nextReview.toISOString() + '.' : 'Goal Schedule proposed for ' + toolArgs.target_level + ' and sent to user for approval.'
       })
     }
 

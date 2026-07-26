@@ -384,12 +384,21 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
                               <Target style={{ width: '18px', height: '18px', color: '#c084fc' }} />
                               <h4 style={{ margin: 0, fontSize: '15px', fontWeight: 700, color: '#ffffff' }}>Goal Schedule Proposed</h4>
-                              <span style={{ marginLeft: 'auto', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', backgroundColor: getLiveGoalStatus(prop.card.id, prop.card.status) === 'ACTIVE' ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)', color: getLiveGoalStatus(prop.card.id, prop.card.status) === 'ACTIVE' ? '#34d399' : '#fbbf24', fontWeight: 700 }}>
-                                {getLiveGoalStatus(prop.card.id, prop.card.status)}
-                              </span>
+                              {(() => {
+                                const isRescheduled = (prop.card.goal_description || '').startsWith('[Agent Rescheduled] ');
+                                const liveStatus = getLiveGoalStatus(prop.card.id, prop.card.status);
+                                const displayStatus = isRescheduled ? 'Agent Rescheduled' : liveStatus;
+                                const bgColor = isRescheduled ? 'rgba(6, 182, 212, 0.15)' : (liveStatus === 'ACTIVE' ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)');
+                                const textColor = isRescheduled ? '#38bdf8' : (liveStatus === 'ACTIVE' ? '#34d399' : '#fbbf24');
+                                return (
+                                  <span style={{ marginLeft: 'auto', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', backgroundColor: bgColor, color: textColor, fontWeight: 700 }}>
+                                    {displayStatus}
+                                  </span>
+                                );
+                              })()}
                             </div>
                             <div style={{ fontSize: '13px', color: '#d1d5db', marginBottom: '10px', lineHeight: '1.5' }}>
-                              {prop.card.goal_description}
+                              {(prop.card.goal_description || '').replace('[Agent Rescheduled] ', '')}
                             </div>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px', marginBottom: '14px' }}>
                               <div><span style={{ color: '#6b7280' }}>Target Level:</span> <span style={{ color: '#e5e7eb', fontWeight: 600 }}>{prop.card.target_level}</span></div>
@@ -530,18 +539,26 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                     border: '1px solid ' + (goal.status === 'ACTIVE' ? 'rgba(16,185,129,0.3)' : goal.status === 'PENDING_APPROVAL' ? 'rgba(245,158,11,0.3)' : 'rgba(107,114,128,0.3)'),
                     backgroundColor: goal.status === 'ACTIVE' ? 'rgba(16,185,129,0.05)' : goal.status === 'PENDING_APPROVAL' ? 'rgba(245,158,11,0.05)' : 'rgba(107,114,128,0.05)',
                   }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                      <span style={{
-                        fontSize: '10px', fontWeight: 700, padding: '3px 8px', borderRadius: '6px',
-                        backgroundColor: goal.status === 'ACTIVE' ? 'rgba(16,185,129,0.15)' : goal.status === 'PENDING_APPROVAL' ? 'rgba(245,158,11,0.15)' : 'rgba(107,114,128,0.15)',
-                        color: goal.status === 'ACTIVE' ? '#34d399' : goal.status === 'PENDING_APPROVAL' ? '#fbbf24' : '#6b7280',
-                      }}>
-                        {goal.status}
-                      </span>
+                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                      {(() => {
+                        const isRescheduled = goal.goal_description.startsWith('[Agent Rescheduled] ');
+                        const displayStatus = isRescheduled ? 'Agent Rescheduled' : goal.status;
+                        const bgColor = isRescheduled ? 'rgba(6, 182, 212, 0.15)' : (goal.status === 'ACTIVE' ? 'rgba(16,185,129,0.15)' : goal.status === 'PENDING_APPROVAL' ? 'rgba(245,158,11,0.15)' : 'rgba(107,114,128,0.15)');
+                        const textColor = isRescheduled ? '#38bdf8' : (goal.status === 'ACTIVE' ? '#34d399' : goal.status === 'PENDING_APPROVAL' ? '#fbbf24' : '#6b7280');
+                        return (
+                          <span style={{
+                            fontSize: '10px', fontWeight: 700, padding: '3px 8px', borderRadius: '6px',
+                            backgroundColor: bgColor,
+                            color: textColor,
+                          }}>
+                            {displayStatus}
+                          </span>
+                        );
+                      })()}
                       <span style={{ fontSize: '10px', color: '#4b5563' }}>{goal.target_level}</span>
                     </div>
                     <div style={{ fontSize: '13px', color: '#e5e7eb', fontWeight: 600, marginBottom: '8px', lineHeight: '1.4' }}>
-                      {goal.goal_description}
+                      {goal.goal_description.replace('[Agent Rescheduled] ', '')}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#6b7280', marginBottom: '10px' }}>
                       <Calendar style={{ width: '12px', height: '12px' }} />
