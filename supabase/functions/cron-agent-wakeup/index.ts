@@ -281,14 +281,34 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    // 1. Fetch all ACTIVE goals that are due to run
-    const { data: ripeGoals, error: fetchError } = await supabaseClient
-      .from('goal_schedules')
-      .select('*')
-      .eq('status', 'ACTIVE')
-      .lte('next_run_at', new Date().toISOString())
+    // Parse request body for targeted goal execution
+    let goalId: string | null = null;
+    try {
+      const body = await req.json()
+      goalId = body?.goal_id || null
+    } catch (e) {
+      // Body may be empty
+    }
 
-    if (fetchError) throw new Error('Failed to fetch goals: ' + fetchError.message)
+    let ripeGoals: any[] = [];
+    if (goalId) {
+      const { data, error: fetchError } = await supabaseClient
+        .from('goal_schedules')
+        .select('*')
+        .eq('id', goalId)
+        .eq('status', 'ACTIVE')
+      if (fetchError) throw new Error('Failed to fetch targeted goal: ' + fetchError.message)
+      ripeGoals = data || []
+    } else {
+      // Fallback: Fetch all ACTIVE goals that are due to run
+      const { data, error: fetchError } = await supabaseClient
+        .from('goal_schedules')
+        .select('*')
+        .eq('status', 'ACTIVE')
+        .lte('next_run_at', new Date().toISOString())
+      if (fetchError) throw new Error('Failed to fetch goals: ' + fetchError.message)
+      ripeGoals = data || []
+    }
     
     let processed = 0;
 
