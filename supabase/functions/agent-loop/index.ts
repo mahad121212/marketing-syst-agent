@@ -492,14 +492,14 @@ serve(async (req) => {
     })
     if (userMsgErr) throw new Error('Failed to save user message: ' + userMsgErr.message)
 
-    // 2. Fetch past chat history for this session (last 10 messages)
+    // 2. Fetch past chat history for this session (last 20 messages)
     const { data: pastMessages } = await supabaseClient
       .from('chat_messages')
       .select('role, content')
       .eq('session_id', session_id)
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
-      .limit(10)
+      .limit(20)
 
     const history = (pastMessages || []).reverse().map(msg => ({
       role: msg.role === 'agent' ? 'assistant' : 'user',

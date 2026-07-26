@@ -318,6 +318,15 @@ serve(async (req) => {
       // Mark this goal as COMPLETED so it doesn't run again. The agent must schedule a new one.
       await supabaseClient.from('goal_schedules').update({ status: 'COMPLETED' }).eq('id', goal.id)
 
+      // Save the trigger event to the chat timeline so both user and follow-up agents have context
+      const triggerContent = `🤖 [Background Goal Triggered]\nGoal: "${goal.goal_description}"\nTarget: ${goal.target_level} (${goal.target_id})`
+      await supabaseClient.from('chat_messages').insert({
+        session_id: goal.session_id,
+        user_id: goal.user_id,
+        role: 'user',
+        content: triggerContent
+      })
+
       // Fetch user settings
       const { data: settings } = await supabaseClient.from('user_settings').select('openrouter_key, preferred_model').eq('id', goal.user_id).single()
       if (!settings?.openrouter_key) continue;
