@@ -55,7 +55,7 @@ const AGENT_TOOLS = [
         properties: {
           target_id: { type: 'string', description: 'The UUID of the campaign, ad set, or ad you want to monitor.' },
           target_level: { type: 'string', enum: ['campaign', 'ad_set', 'ad', 'account'], description: 'The level of the target.' },
-          hours_until_next_review: { type: 'number', description: 'How many hours from now to wake up (minimum 4).' },
+          hours_until_next_review: { type: 'number', description: 'How many hours from now to wake up (minimum 1 minute, use 0.016).' },
           goal_description: { type: 'string', description: 'What are you monitoring?' }
         },
         required: ['target_id', 'target_level', 'hours_until_next_review', 'goal_description']
@@ -241,7 +241,7 @@ async function executeTool(
     }
 
     case 'set_goal_schedule': {
-      const reviewHours = Math.max(toolArgs.hours_until_next_review || 4, 4)
+      const reviewHours = Math.max(toolArgs.hours_until_next_review || 0.016, 0.016)
       const now = new Date()
       const nextReview = new Date(now.getTime() + reviewHours * 60 * 60 * 1000)
 
