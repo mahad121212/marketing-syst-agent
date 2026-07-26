@@ -40,13 +40,13 @@ const AGENT_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          target_id: { type: 'string', description: 'The UUID of the campaign or ad set to adjust.' },
+          target_id: { type: 'string', description: 'The UUID of the campaign or ad set to adjust. If creating a NEW campaign, omit this or pass "NEW".' },
           action_type: { type: 'string', enum: ['PAUSE', 'INCREASE_BUDGET', 'DECREASE_BUDGET', 'CHANGE_TARGETING', 'CREATE_NEW'], description: 'The type of adjustment.' },
           priority: { type: 'string', enum: ['LOW', 'HIGH', 'MANDATORY'], description: 'The priority of this action.' },
-          proposed_changes: { type: 'object', description: 'JSON object detailing the exact changes (e.g. {"new_budget": 150}).' },
-          reasoning: { type: 'string', description: 'A detailed explanation of WHY this adjustment is recommended based on the data, business context, and time elapsed.' }
+          proposed_changes: { type: 'object', description: 'JSON object detailing the exact changes.' },
+          reasoning: { type: 'string', description: 'A detailed explanation of WHY this adjustment is recommended.' }
         },
-        required: ['target_id', 'action_type', 'priority', 'proposed_changes', 'reasoning']
+        required: ['action_type', 'priority', 'proposed_changes', 'reasoning']
       }
     }
   },
@@ -257,26 +257,26 @@ async function executeTool(
     }
 
     case 'propose_action_card': {
-      const { data, error } = await supabaseClient
-        .from('action_cards')
-        .insert({
-          user_id: userId,
-          campaign_id: toolArgs.target_id,
-          priority: toolArgs.priority,
-          action_type: toolArgs.action_type,
-          proposed_changes: toolArgs.proposed_changes,
-          reasoning: toolArgs.reasoning,
-          status: 'PENDING'
-        })
-        .select()
-        .single()
+      var campId = toolArgs.target_id;
+      if (campId === 'NEW' || campId === '' || !campId) {
+        campId = null;
+      }
+      
+      var cardRes = await supabaseClient.from('action_cards').insert({
+        user_id: userId,
+        campaign_id: campId,
+        priority: toolArgs.priority,
+        action_type: toolArgs.action_type,
+        proposed_changes: toolArgs.proposed_changes,
+        reasoning: toolArgs.reasoning,
+        status: 'PENDING'
+      }).select().single()
 
-      if (error) return JSON.stringify({ error: error.message })
+      if (cardRes.error) return JSON.stringify({ error: cardRes.error.message })
 
-      // Also record this in agent memory
       await supabaseClient.from('agent_memory').insert({
         user_id: userId,
-        campaign_id: toolArgs.target_id,
+        campaign_id: campId,
         decision_made: 'Proposed ' + toolArgs.action_type,
         reasoning_snapshot: toolArgs.reasoning
       })
