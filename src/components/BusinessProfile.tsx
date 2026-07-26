@@ -81,7 +81,7 @@ export const BusinessProfile: React.FC<BusinessProfileProps> = ({ onSave }) => {
           target_roas: useTargetRoas ? targetRoas : null,
           business_stage: businessStage,
           additional_context: additionalContext,
-        });
+        }, { onConflict: 'user_id' });
 
       if (error) throw error;
       
