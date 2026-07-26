@@ -86,6 +86,20 @@ export const AgentChat: React.FC<AgentChatProps> = ({
     loadGoalSchedules();
   };
 
+  const handleApproveAllPending = async () => {
+    const pendingIds = goalSchedules.filter(g => g.status === 'PENDING_APPROVAL').map(g => g.id);
+    if (pendingIds.length === 0) return;
+    await supabase.from('goal_schedules').update({ status: 'ACTIVE' }).in('id', pendingIds);
+    loadGoalSchedules();
+  };
+
+  const handleRejectAllPending = async () => {
+    const pendingIds = goalSchedules.filter(g => g.status === 'PENDING_APPROVAL').map(g => g.id);
+    if (pendingIds.length === 0) return;
+    await supabase.from('goal_schedules').update({ status: 'CANCELLED' }).in('id', pendingIds);
+    loadGoalSchedules();
+  };
+
   const getLiveGoalStatus = (goalId: string, fallback: string) => {
     const goal = goalSchedules.find(g => g.id === goalId);
     return goal ? goal.status : fallback;
@@ -358,83 +372,92 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                     {msg.content}
                   </div>
 
-                  {/* Goal Schedule Card */}
-                  {msg.proposal && msg.proposal.type === 'GOAL_PROPOSAL' && msg.proposal.card && (
-                    <div style={{ padding: '18px', borderRadius: '14px', border: '1px solid rgba(139, 92, 246, 0.4)', backgroundColor: 'rgba(139, 92, 246, 0.05)', marginTop: '4px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                        <Target style={{ width: '18px', height: '18px', color: '#c084fc' }} />
-                        <h4 style={{ margin: 0, fontSize: '15px', fontWeight: 700, color: '#ffffff' }}>Goal Schedule Proposed</h4>
-                        <span style={{ marginLeft: 'auto', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', backgroundColor: getLiveGoalStatus(msg.proposal.card.id, msg.proposal.card.status) === 'ACTIVE' ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)', color: getLiveGoalStatus(msg.proposal.card.id, msg.proposal.card.status) === 'ACTIVE' ? '#34d399' : '#fbbf24', fontWeight: 700 }}>
-                          {getLiveGoalStatus(msg.proposal.card.id, msg.proposal.card.status)}
-                        </span>
-                      </div>
-                      <div style={{ fontSize: '13px', color: '#d1d5db', marginBottom: '10px', lineHeight: '1.5' }}>
-                        {msg.proposal.card.goal_description}
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px', marginBottom: '14px' }}>
-                        <div><span style={{ color: '#6b7280' }}>Target Level:</span> <span style={{ color: '#e5e7eb', fontWeight: 600 }}>{msg.proposal.card.target_level}</span></div>
-                        <div><span style={{ color: '#6b7280' }}>Next Run:</span> <span style={{ color: '#38bdf8', fontWeight: 600 }}>{new Date(msg.proposal.card.next_run_at).toLocaleString()}</span></div>
-                      </div>
-                      {getLiveGoalStatus(msg.proposal.card.id, msg.proposal.card.status) === 'PENDING_APPROVAL' && (
-                        <div style={{ display: 'flex', gap: '10px' }}>
-                          <button onClick={() => handleApproveGoal(msg.proposal!.card.id)} style={{ flex: 1, backgroundColor: '#10b981', color: '#fff', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: 700, fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-                            <CheckCircle2 style={{ width: '14px', height: '14px' }} /> Approve Schedule
-                          </button>
-                          <button onClick={() => handleCancelGoal(msg.proposal!.card.id)} style={{ flex: 1, backgroundColor: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', padding: '10px', borderRadius: '8px', fontWeight: 700, fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-                            <X style={{ width: '14px', height: '14px' }} /> Reject
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  {/* Dynamic rendering for single or multiple proposals */}
+                  {(() => {
+                    const proposals = msg.proposal
+                      ? (Array.isArray(msg.proposal) ? msg.proposal : [msg.proposal])
+                      : [];
+                    return proposals.map((prop: any, idx: number) => {
+                      if (prop.type === 'GOAL_PROPOSAL' && prop.card) {
+                        return (
+                          <div key={idx} style={{ padding: '18px', borderRadius: '14px', border: '1px solid rgba(139, 92, 246, 0.4)', backgroundColor: 'rgba(139, 92, 246, 0.05)', marginTop: '4px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                              <Target style={{ width: '18px', height: '18px', color: '#c084fc' }} />
+                              <h4 style={{ margin: 0, fontSize: '15px', fontWeight: 700, color: '#ffffff' }}>Goal Schedule Proposed</h4>
+                              <span style={{ marginLeft: 'auto', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', backgroundColor: getLiveGoalStatus(prop.card.id, prop.card.status) === 'ACTIVE' ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)', color: getLiveGoalStatus(prop.card.id, prop.card.status) === 'ACTIVE' ? '#34d399' : '#fbbf24', fontWeight: 700 }}>
+                                {getLiveGoalStatus(prop.card.id, prop.card.status)}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: '13px', color: '#d1d5db', marginBottom: '10px', lineHeight: '1.5' }}>
+                              {prop.card.goal_description}
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px', marginBottom: '14px' }}>
+                              <div><span style={{ color: '#6b7280' }}>Target Level:</span> <span style={{ color: '#e5e7eb', fontWeight: 600 }}>{prop.card.target_level}</span></div>
+                              <div><span style={{ color: '#6b7280' }}>Next Run:</span> <span style={{ color: '#38bdf8', fontWeight: 600 }}>{new Date(prop.card.next_run_at).toLocaleString()}</span></div>
+                            </div>
+                            {getLiveGoalStatus(prop.card.id, prop.card.status) === 'PENDING_APPROVAL' && (
+                              <div style={{ display: 'flex', gap: '10px' }}>
+                                <button onClick={() => handleApproveGoal(prop.card.id)} style={{ flex: 1, backgroundColor: '#10b981', color: '#fff', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: 700, fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                                  <CheckCircle2 style={{ width: '14px', height: '14px' }} /> Approve Schedule
+                                </button>
+                                <button onClick={() => handleCancelGoal(prop.card.id)} style={{ flex: 1, backgroundColor: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', padding: '10px', borderRadius: '8px', fontWeight: 700, fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                                  <X style={{ width: '14px', height: '14px' }} /> Reject
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      } else if (prop.campaignName) {
+                        return (
+                          <div key={idx} className="glass-panel" style={{ padding: '20px', borderRadius: '14px', border: '1px solid rgba(6, 182, 212, 0.4)', backgroundColor: 'rgba(6, 182, 212, 0.05)', marginTop: '4px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                              <Sparkles style={{ width: '18px', height: '18px', color: '#06b6d4' }} />
+                              <h4 style={{ margin: 0, fontSize: '15px', fontWeight: 700, color: '#ffffff' }}>Generated Strategy Proposal</h4>
+                            </div>
 
-                  {/* Standard Campaign Proposal Card */}
-                  {msg.proposal && msg.proposal.type !== 'GOAL_PROPOSAL' && msg.proposal.campaignName && (
-                    <div className="glass-panel" style={{ padding: '20px', borderRadius: '14px', border: '1px solid rgba(6, 182, 212, 0.4)', backgroundColor: 'rgba(6, 182, 212, 0.05)', marginTop: '4px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                        <Sparkles style={{ width: '18px', height: '18px', color: '#06b6d4' }} />
-                        <h4 style={{ margin: 0, fontSize: '15px', fontWeight: 700, color: '#ffffff' }}>Generated Strategy Proposal</h4>
-                      </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px', fontSize: '13px' }}>
+                              <div>
+                                <span style={{ color: '#9ca3af' }}>Campaign Name:</span>
+                                <div style={{ fontWeight: 600, color: '#f3f4f6' }}>{prop.campaignName}</div>
+                              </div>
+                              <div>
+                                <span style={{ color: '#9ca3af' }}>Proposed Daily Budget:</span>
+                                <div style={{ fontWeight: 600, color: '#34d399' }}>${prop.budget}/day</div>
+                              </div>
+                              <div>
+                                <span style={{ color: '#9ca3af' }}>Objective:</span>
+                                <div style={{ fontWeight: 600, color: '#c084fc' }}>{prop.objective}</div>
+                              </div>
+                              <div>
+                                <span style={{ color: '#9ca3af' }}>Target Audience:</span>
+                                <div style={{ fontWeight: 600, color: '#38bdf8' }}>{prop.targetAudience}</div>
+                              </div>
+                            </div>
 
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px', fontSize: '13px' }}>
-                        <div>
-                          <span style={{ color: '#9ca3af' }}>Campaign Name:</span>
-                          <div style={{ fontWeight: 600, color: '#f3f4f6' }}>{msg.proposal.campaignName}</div>
-                        </div>
-                        <div>
-                          <span style={{ color: '#9ca3af' }}>Proposed Daily Budget:</span>
-                          <div style={{ fontWeight: 600, color: '#34d399' }}>${msg.proposal.budget}/day</div>
-                        </div>
-                        <div>
-                          <span style={{ color: '#9ca3af' }}>Objective:</span>
-                          <div style={{ fontWeight: 600, color: '#c084fc' }}>{msg.proposal.objective}</div>
-                        </div>
-                        <div>
-                          <span style={{ color: '#9ca3af' }}>Target Audience:</span>
-                          <div style={{ fontWeight: 600, color: '#38bdf8' }}>{msg.proposal.targetAudience}</div>
-                        </div>
-                      </div>
+                            <div style={{ marginBottom: '16px', fontSize: '13px' }}>
+                              <span style={{ color: '#9ca3af' }}>Recommended AI Ad Copy:</span>
+                              <div style={{ fontStyle: 'italic', backgroundColor: 'rgba(0,0,0,0.3)', padding: '10px 12px', borderRadius: '6px', color: '#e5e7eb', marginTop: '4px' }}>
+                                "{prop.suggestedCopy}"
+                              </div>
+                            </div>
 
-                      <div style={{ marginBottom: '16px', fontSize: '13px' }}>
-                        <span style={{ color: '#9ca3af' }}>Recommended AI Ad Copy:</span>
-                        <div style={{ fontStyle: 'italic', backgroundColor: 'rgba(0,0,0,0.3)', padding: '10px 12px', borderRadius: '6px', color: '#e5e7eb', marginTop: '4px' }}>
-                          "{msg.proposal.suggestedCopy}"
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={() => onApproveProposal(msg.proposal!)}
-                        style={{
-                          width: '100%', backgroundColor: '#10b981', color: '#ffffff', border: 'none',
-                          padding: '10px 16px', borderRadius: '8px', fontWeight: 700, fontSize: '13px',
-                          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                        }}
-                      >
-                        <Play style={{ width: '14px', height: '14px', fill: '#ffffff' }} />
-                        Approve &amp; Launch Live on Meta Ads Manager
-                      </button>
-                    </div>
-                  )}
+                            <button
+                              onClick={() => onApproveProposal(prop)}
+                              style={{
+                                width: '100%', backgroundColor: '#10b981', color: '#ffffff', border: 'none',
+                                padding: '10px 16px', borderRadius: '8px', fontWeight: 700, fontSize: '13px',
+                                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                              }}
+                            >
+                              <Play style={{ width: '14px', height: '14px', fill: '#ffffff' }} />
+                              Approve &amp; Launch Live on Meta Ads Manager
+                            </button>
+                          </div>
+                        );
+                      }
+                      return null;
+                    });
+                  })()}
 
                   <span style={{ fontSize: '11px', color: '#6b7280', alignSelf: msg.sender === 'user' ? 'flex-end' : 'flex-start' }}>
                     {msg.timestamp}
@@ -469,6 +492,33 @@ export const AgentChat: React.FC<AgentChatProps> = ({
               </button>
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+              {/* Bulk Actions Header */}
+              {(() => {
+                const pendingCount = goalSchedules.filter(g => g.status === 'PENDING_APPROVAL').length;
+                if (pendingCount > 0) {
+                  return (
+                    <div style={{
+                      padding: '12px', borderRadius: '10px', backgroundColor: 'rgba(245,158,11,0.08)',
+                      border: '1px solid rgba(245,158,11,0.2)', marginBottom: '16px', display: 'flex',
+                      flexDirection: 'column', gap: '8px'
+                    }}>
+                      <div style={{ fontSize: '12px', color: '#fbbf24', fontWeight: 600 }}>
+                        {pendingCount} Goal{pendingCount > 1 ? 's' : ''} Pending Approval
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button onClick={handleApproveAllPending} style={{ flex: 1, backgroundColor: '#10b981', color: '#fff', border: 'none', padding: '8px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                          <CheckCircle2 style={{ width: '12px', height: '12px' }} /> Approve All
+                        </button>
+                        <button onClick={handleRejectAllPending} style={{ flex: 1, backgroundColor: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', padding: '8px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                          <X style={{ width: '12px', height: '12px' }} /> Reject All
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
               {goalSchedules.length === 0 ? (
                 <div style={{ textAlign: 'center', color: '#4b5563', fontSize: '13px', marginTop: '40px' }}>
                   No goal schedules in this chat session yet.
@@ -497,11 +547,31 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                       <Calendar style={{ width: '12px', height: '12px' }} />
                       Next Run: <span style={{ color: '#38bdf8' }}>{new Date(goal.next_run_at).toLocaleString()}</span>
                     </div>
-                    {(goal.status === 'ACTIVE' || goal.status === 'PENDING_APPROVAL') && (
+                    {goal.status === 'PENDING_APPROVAL' && (
+                      <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+                        <button onClick={() => handleApproveGoal(goal.id)} style={{
+                          flex: 1, backgroundColor: '#10b981', color: '#fff', border: 'none',
+                          padding: '8px', borderRadius: '6px', fontWeight: 600, fontSize: '12px',
+                          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px'
+                        }}>
+                          <CheckCircle2 style={{ width: '12px', height: '12px' }} /> Approve
+                        </button>
+                        <button onClick={() => handleCancelGoal(goal.id)} style={{
+                          flex: 1, backgroundColor: 'rgba(239,68,68,0.1)', color: '#f87171',
+                          border: '1px solid rgba(239,68,68,0.3)', padding: '8px', borderRadius: '6px',
+                          fontWeight: 600, fontSize: '12px', cursor: 'pointer', display: 'flex',
+                          alignItems: 'center', justifyContent: 'center', gap: '4px'
+                        }}>
+                          <X style={{ width: '12px', height: '12px' }} /> Reject
+                        </button>
+                      </div>
+                    )}
+                    {goal.status === 'ACTIVE' && (
                       <button onClick={() => handleCancelGoal(goal.id)} style={{
                         width: '100%', backgroundColor: 'rgba(239,68,68,0.1)', color: '#f87171',
                         border: '1px solid rgba(239,68,68,0.3)', padding: '8px', borderRadius: '6px',
                         fontWeight: 600, fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s',
+                        marginTop: '10px'
                       }}>
                         Cancel Goal
                       </button>

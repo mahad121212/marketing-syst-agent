@@ -398,7 +398,7 @@ serve(async (req) => {
         content: finalContent,
         thinking_steps: thinkingSteps,
         tool_calls: toolExecutions,
-        proposal: proposals.length > 0 ? proposals[0] : null
+        proposal: proposals.length > 0 ? proposals : null
       })
       if (agentMsgErr) throw new Error('Failed to save background agent message: ' + agentMsgErr.message)
 
