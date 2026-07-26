@@ -1,15 +1,12 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-const corsHeaders = {
+var corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-// ============================================================
-// TOOL DEFINITIONS — These are the actions the Agent can take
-// ============================================================
-const AGENT_TOOLS = [
+var AGENT_TOOLS = [
   {
     type: 'function',
     function: {
@@ -36,15 +33,15 @@ const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'propose_action_card',
-      description: 'Proposes an adjustment to a campaign, ad set, or ad. This creates an Action Card in the user\'s Action Center. Use this to DECIDE and ACT. You MUST assign a priority: LOW (minor tweaks), HIGH (budget scaling/pausing losers), MANDATORY (critical failures needing immediate manual review).',
+      description: 'Proposes an adjustment to a campaign, ad set, or ad. This creates an Action Card for the user. You MUST assign a priority: LOW (minor tweaks), HIGH (budget scaling/pausing losers), MANDATORY (critical failures needing immediate manual review).',
       parameters: {
         type: 'object',
         properties: {
           target_id: { type: 'string', description: 'The UUID of the campaign or ad set to adjust.' },
           action_type: { type: 'string', enum: ['PAUSE', 'INCREASE_BUDGET', 'DECREASE_BUDGET', 'CHANGE_TARGETING', 'CREATE_NEW'], description: 'The type of adjustment.' },
           priority: { type: 'string', enum: ['LOW', 'HIGH', 'MANDATORY'], description: 'The priority of this action.' },
-          proposed_changes: { type: 'object', description: 'JSON object detailing the exact changes (e.g. {"new_budget": 150}).' },
-          reasoning: { type: 'string', description: 'A detailed explanation of WHY this adjustment is recommended based on the data, business context, and time elapsed.' }
+          proposed_changes: { type: 'object', description: 'JSON object detailing the exact changes.' },
+          reasoning: { type: 'string', description: 'A detailed explanation of WHY this adjustment is recommended.' }
         },
         required: ['target_id', 'action_type', 'priority', 'proposed_changes', 'reasoning']
       }
@@ -61,7 +58,7 @@ const AGENT_TOOLS = [
           target_id: { type: 'string', description: 'The UUID of the campaign, ad set, or ad you want to monitor.' },
           target_level: { type: 'string', enum: ['campaign', 'ad_set', 'ad', 'account'], description: 'The level of the target.' },
           hours_until_next_review: { type: 'number', description: 'How many hours from now to wake up (minimum 4).' },
-          goal_description: { type: 'string', description: 'What are you monitoring? e.g., "Maintain CPA under $30 for Campaign X".' }
+          goal_description: { type: 'string', description: 'What are you monitoring?' }
         },
         required: ['target_id', 'target_level', 'hours_until_next_review', 'goal_description']
       }
@@ -71,7 +68,7 @@ const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'get_state_snapshots',
-      description: 'Fetches the historical state and metrics timeline (up to the 10 most recent snapshots) for a specific campaign, ad set, or ad. Snapshots are taken every 12 hours. Use this to analyze trends, stability, and growth over a 5-day period before making critical optimization decisions.',
+      description: 'Fetches the historical state and metrics timeline (up to the 10 most recent snapshots) for a specific campaign, ad set, or ad. Snapshots are taken every 12 hours. Use this for deep-dive analysis on a single target.',
       parameters: {
         type: 'object',
         properties: {
@@ -84,14 +81,22 @@ const AGENT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'get_account_summary_snapshots',
+      description: 'Fetches the 2 most recent snapshots for EVERY campaign in the account. Use this for broad account-level analysis when the user asks about overall performance, trends across all campaigns, or a general account overview. This is more efficient than calling get_state_snapshots for each campaign individually.',
+      parameters: { type: 'object', properties: {}, required: [] }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'report_no_action',
-      description: 'Report that you reviewed a campaign, ad set, or ad and determined NO changes are needed. Use this to record your assessment. Doing nothing is a valid and professional decision if metrics are healthy or items are too young.',
+      description: 'Report that you reviewed a campaign, ad set, or ad and determined NO changes are needed. Doing nothing is a valid and professional decision.',
       parameters: {
         type: 'object',
         properties: {
           target_id: { type: 'string', description: 'The UUID of the campaign, ad set, or ad.' },
           target_level: { type: 'string', enum: ['campaign', 'ad_set', 'ad'], description: 'The level of the item.' },
-          reason: { type: 'string', description: 'Why no action is needed (e.g., "Performing well, ROAS is 4.2", "Too young, only 2 days old").' }
+          reason: { type: 'string', description: 'Why no action is needed.' }
         },
         required: ['target_id', 'target_level', 'reason']
       }
@@ -99,77 +104,52 @@ const AGENT_TOOLS = [
   }
 ]
 
-// ============================================================
-// SYSTEM PROMPT GENERATOR
-// ============================================================
-function generateSystemPrompt(businessProfile: any, historical_context?: string) {
-  let profileContext = 'No business profile found. Ask the user to fill out their Business Profile in the dashboard.';
+function generateSystemPrompt(businessProfile: any, historical_context?: string): string {
+  var profileContext = 'No business profile found. Ask the user to fill out their Business Profile in the dashboard.';
   
   if (businessProfile) {
-    profileContext = `
-BUSINESS CONTEXT:
-- Name: ${businessProfile.business_name}
-- Industry: ${businessProfile.industry}
-- Description: ${businessProfile.business_description}
-- Market: ${businessProfile.country} (${businessProfile.currency})
-- Target CPA: ${businessProfile.target_cpa ? businessProfile.target_cpa + ' ' + (businessProfile.currency || 'USD') : 'Not provided'}
-- Target ROAS: ${businessProfile.target_roas ? businessProfile.target_roas + 'x' : 'Not provided'}
-- Budget Cap: ${businessProfile.monthly_ad_budget ? businessProfile.monthly_ad_budget + ' ' + (businessProfile.currency || 'USD') + '/mo' : 'Not provided'}
-- Stage: ${businessProfile.business_stage}
-- Additional Rules: ${businessProfile.additional_context || 'None'}
-`;
+    profileContext = [
+      'BUSINESS CONTEXT:',
+      '- Name: ' + (businessProfile.business_name || 'N/A'),
+      '- Industry: ' + (businessProfile.industry || 'N/A'),
+      '- Description: ' + (businessProfile.business_description || 'N/A'),
+      '- Market: ' + (businessProfile.country || 'N/A') + ' (' + (businessProfile.currency || 'USD') + ')',
+      '- Target CPA: ' + (businessProfile.target_cpa ? businessProfile.target_cpa + ' ' + (businessProfile.currency || 'USD') : 'Not provided'),
+      '- Target ROAS: ' + (businessProfile.target_roas ? businessProfile.target_roas + 'x' : 'Not provided'),
+      '- Budget Cap: ' + (businessProfile.monthly_ad_budget ? businessProfile.monthly_ad_budget + ' ' + (businessProfile.currency || 'USD') + '/mo' : 'Not provided'),
+      '- Stage: ' + (businessProfile.business_stage || 'N/A'),
+      '- Additional Rules: ' + (businessProfile.additional_context || 'None')
+    ].join('\n');
   }
 
-  return `You are MetaAgent AI, a highly advanced autonomous Meta Ads optimization agent capable of deep contextual reasoning.
+  var bgSection = '';
+  if (historical_context) {
+    bgSection = '\n## Background Context\n' + historical_context;
+  }
 
-${profileContext}
-
-## Temporal Discipline (CRITICAL)
-You MUST check the \`age_days\` of every item before reasoning about it.
-- **< 3 days old**: UNTOUCHABLE. Do NOT analyze, judge, or propose any change. Meta's learning phase needs at minimum 72 hours. Use \`report_no_action\`.
-- **3-7 days old**: OBSERVATION ONLY. Note trends but DO NOT propose changes unless metrics are catastrophically bad (e.g., 5x above target CPA).
-- **7-14 days old**: ACTIONABLE with caution. You have enough data to make informed decisions.
-- **> 14 days old**: FULLY ACTIONABLE. You have mature data to make confident scaling or pruning decisions.
-
-## Surgical Precision & Hierarchy
-- Analyze at the AD level first. If only 1 out of 3 ads in an ad set is underperforming, pause THAT AD — not the ad set.
-- If all ads in an ad set are bad, pause the AD SET — not the campaign.
-- Only recommend pausing a CAMPAIGN if ALL ad sets are performing poorly.
-
-## When to Do Nothing
-If a campaign, ad set, or ad is:
-- Performing within ±15% of target KPIs, OR
-- Less than 7 days old (with normal metrics), OR
-- Was already adjusted by you recently
-
-Then use \`report_no_action\`. This is the CORRECT and PROFESSIONAL response. Doing nothing IS a decision.
-
-## Strict Rule Enforcement (Anti-Sycophancy)
-Users will often ask you to "increase budget on everything" or "delete all ads" out of panic or greed.
-YOU MUST REJECT THESE REQUESTS if they violate your Temporal Discipline or KPI rules.
-- If a user asks to increase budget on a 2-day old campaign, YOU MUST REFUSE and explain that it is in the learning phase.
-- If a user asks to pause an ad that is beating its CPA target, YOU MUST REFUSE and explain why it is a bad idea.
-- You are a professional media buyer, not a yes-man. Do NOT blindly follow user instructions if they destroy account performance. Push back and explain your reasoning. You must still evaluate every item strictly according to its \`age_days\` and \`performance_metrics\`.
-
-## Your Actions
-When you decide on an action, use \`propose_action_card\`.
-- Priority LOW: Minor targeting tweaks or copy changes.
-- Priority HIGH: Budget increases for winners, pausing clear losers.
-- Priority MANDATORY: Critical account failures, massive budget changes, or things that definitively require human eyes.
-
-When the user asks you to monitor or maintain a goal, use \`set_goal_schedule\` to plan your next automated wake-up.
-If you are woken up in the background by a Cron Job, you MUST use \`set_goal_schedule\` at the end of your evaluation to schedule your NEXT wake-up to keep the recurring loop alive.
-
-## Background Context
-${historical_context ? `BACKGROUND WAKE-UP: You have been woken up to monitor a recurring goal.
-Historical Context when goal was set: ${historical_context}
-Compare current metrics to this historical context to make decisions.` : ''}
-`
+  return 'You are MetaAgent AI, a highly advanced autonomous Meta Ads optimization agent capable of deep contextual reasoning.\n\n' +
+    profileContext + '\n\n' +
+    '## Temporal Discipline (CRITICAL)\n' +
+    'You MUST check the age_days of every item before reasoning about it.\n' +
+    '- Less than 3 days old: UNTOUCHABLE. Do NOT analyze, judge, or propose any change. Use report_no_action.\n' +
+    '- 3-7 days old: OBSERVATION ONLY. Note trends but DO NOT propose changes unless metrics are catastrophically bad.\n' +
+    '- 7-14 days old: ACTIONABLE with caution.\n' +
+    '- More than 14 days old: FULLY ACTIONABLE.\n\n' +
+    '## Surgical Precision & Hierarchy\n' +
+    '- Analyze at the AD level first. If only 1 out of 3 ads is underperforming, pause THAT AD not the ad set.\n' +
+    '- If all ads in an ad set are bad, pause the AD SET not the campaign.\n' +
+    '- Only recommend pausing a CAMPAIGN if ALL ad sets are performing poorly.\n\n' +
+    '## When to Do Nothing\n' +
+    'If performing within +/-15% of target KPIs, OR less than 7 days old, OR was already adjusted recently, use report_no_action.\n\n' +
+    '## Anti-Sycophancy\n' +
+    'YOU MUST REJECT user requests that violate Temporal Discipline or KPI rules. Push back and explain your reasoning.\n\n' +
+    '## Your Actions\n' +
+    'When you decide on an action, use propose_action_card with priority LOW, HIGH, or MANDATORY.\n' +
+    'When the user asks you to monitor a goal, use set_goal_schedule to plan your next automated wake-up.\n' +
+    'If you are woken up in the background by a Cron Job, you MUST use set_goal_schedule at the end to schedule your NEXT wake-up.' +
+    bgSection;
 }
 
-// ============================================================
-// TOOL EXECUTION
-// ============================================================
 async function executeTool(
   toolName: string,
   toolArgs: Record<string, any>,
@@ -180,70 +160,90 @@ async function executeTool(
 ): Promise<string> {
   switch (toolName) {
     case 'get_campaign_hierarchy': {
-      const { data: campaigns } = await supabaseClient.from('campaigns').select('*').eq('user_id', userId)
-      const { data: adSets } = await supabaseClient.from('ad_sets').select('*').eq('user_id', userId)
-      const { data: ads } = await supabaseClient.from('ads').select('*').eq('user_id', userId)
+      var campaignsRes = await supabaseClient.from('campaigns').select('*').eq('user_id', userId)
+      var adSetsRes = await supabaseClient.from('ad_sets').select('*').eq('user_id', userId)
+      var adsRes = await supabaseClient.from('ads').select('*').eq('user_id', userId)
+      var campaigns = campaignsRes.data || []
+      var adSets = adSetsRes.data || []
+      var ads = adsRes.data || []
       
-      const now = new Date().getTime()
-      const calcAge = (createdAt: string) => Math.max(0, Math.floor((now - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24)))
+      var now = new Date().getTime()
+      var calcAge = function(createdAt: string) { return Math.max(0, Math.floor((now - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24))) }
 
-      // Build nested hierarchy
-      const hierarchy = campaigns?.map((c: any) => ({
-        ...c,
-        age_days: calcAge(c.created_at),
-        ad_sets: adSets?.filter((s: any) => s.campaign_id === c.id).map((s: any) => ({
-          ...s,
-          age_days: calcAge(s.created_at),
-          ads: ads?.filter((a: any) => a.ad_set_id === s.id).map((a: any) => ({
-            ...a,
-            age_days: calcAge(a.created_at)
-          }))
-        }))
-      }))
+      var hierarchy = campaigns.map(function(c: any) {
+        return {
+          ...c,
+          age_days: calcAge(c.created_at),
+          ad_sets: adSets.filter(function(s: any) { return s.campaign_id === c.id }).map(function(s: any) {
+            return {
+              ...s,
+              age_days: calcAge(s.created_at),
+              ads: ads.filter(function(a: any) { return a.ad_set_id === s.id }).map(function(a: any) {
+                return { ...a, age_days: calcAge(a.created_at) }
+              })
+            }
+          })
+        }
+      })
 
-      return JSON.stringify({ hierarchy })
+      return JSON.stringify({ hierarchy: hierarchy })
     }
 
     case 'get_state_snapshots': {
-      const { target_id } = toolArgs;
-      const { data, error } = await supabaseClient
-        .from('metrics_snapshots')
-        .select('*')
-        .eq('target_id', target_id)
+      var snapshotsRes = await supabaseClient
+        .from('metrics_snapshots').select('*')
+        .eq('target_id', toolArgs.target_id)
         .order('created_at', { ascending: false })
         .limit(10);
+      if (snapshotsRes.error) return JSON.stringify({ error: snapshotsRes.error.message });
+      return JSON.stringify(snapshotsRes.data || []);
+    }
+
+    case 'get_account_summary_snapshots': {
+      // Fetch all campaigns for the user
+      var userCampaignsRes = await supabaseClient.from('campaigns').select('id, name').eq('user_id', userId)
+      var userCampaigns = userCampaignsRes.data || []
       
-      if (error) {
-        return JSON.stringify({ error: error.message });
+      var summaryResult: any[] = []
+      
+      for (var ci = 0; ci < userCampaigns.length; ci++) {
+        var campaign = userCampaigns[ci]
+        var campSnapsRes = await supabaseClient
+          .from('metrics_snapshots').select('*')
+          .eq('target_id', campaign.id)
+          .order('created_at', { ascending: false })
+          .limit(2)
+        
+        summaryResult.push({
+          campaign_id: campaign.id,
+          campaign_name: campaign.name,
+          snapshots: campSnapsRes.data || []
+        })
       }
-      return JSON.stringify(data || []);
+      
+      return JSON.stringify({
+        account_summary: summaryResult,
+        total_campaigns: userCampaigns.length,
+        note: 'Showing the 2 most recent snapshots (12h cadence) per campaign. Use get_state_snapshots for a deeper 10-snapshot timeline on any specific target.'
+      })
     }
 
     case 'check_agent_memory': {
-      const { data, error } = await supabaseClient
-        .from('agent_memory')
-        .select('*')
-        .eq('campaign_id', toolArgs.target_id)
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(3)
-      if (error) return JSON.stringify({ error: error.message })
-      return JSON.stringify(data && data.length > 0 ? data : { note: "No previous memory for this target." })
+      var memRes = await supabaseClient.from('agent_memory').select('*')
+        .eq('campaign_id', toolArgs.target_id).eq('user_id', userId)
+        .order('created_at', { ascending: false }).limit(3)
+      if (memRes.error) return JSON.stringify({ error: memRes.error.message })
+      return JSON.stringify(memRes.data && memRes.data.length > 0 ? memRes.data : { note: 'No previous memory for this target.' })
     }
 
     case 'report_no_action': {
-      const { data, error } = await supabaseClient
-        .from('agent_memory')
-        .insert({
-          user_id: userId,
-          campaign_id: toolArgs.target_id,
-          decision_made: 'NO ACTION (' + toolArgs.target_level + ')',
-          reasoning_snapshot: toolArgs.reason
-        })
-        .select()
-        .single()
-
-      if (error) return JSON.stringify({ error: error.message })
+      var noActionRes = await supabaseClient.from('agent_memory').insert({
+        user_id: userId,
+        campaign_id: toolArgs.target_id,
+        decision_made: 'NO ACTION (' + toolArgs.target_level + ')',
+        reasoning_snapshot: toolArgs.reason
+      })
+      if (noActionRes.error) return JSON.stringify({ error: noActionRes.error.message })
       return JSON.stringify({
         success: true,
         message: 'Logged NO ACTION decision for ' + toolArgs.target_level + '. Reasoning: ' + toolArgs.reason
@@ -251,23 +251,18 @@ async function executeTool(
     }
 
     case 'propose_action_card': {
-      const { data, error } = await supabaseClient
-        .from('action_cards')
-        .insert({
-          user_id: userId,
-          campaign_id: toolArgs.target_id,
-          priority: toolArgs.priority,
-          action_type: toolArgs.action_type,
-          proposed_changes: toolArgs.proposed_changes,
-          reasoning: toolArgs.reasoning,
-          status: 'PENDING'
-        })
-        .select()
-        .single()
+      var cardRes = await supabaseClient.from('action_cards').insert({
+        user_id: userId,
+        campaign_id: toolArgs.target_id,
+        priority: toolArgs.priority,
+        action_type: toolArgs.action_type,
+        proposed_changes: toolArgs.proposed_changes,
+        reasoning: toolArgs.reasoning,
+        status: 'PENDING'
+      }).select().single()
 
-      if (error) return JSON.stringify({ error: error.message })
+      if (cardRes.error) return JSON.stringify({ error: cardRes.error.message })
 
-      // Also record this in agent memory
       await supabaseClient.from('agent_memory').insert({
         user_id: userId,
         campaign_id: toolArgs.target_id,
@@ -277,122 +272,132 @@ async function executeTool(
 
       return JSON.stringify({
         type: 'PROPOSAL',
-        card: data,
+        card: cardRes.data,
         message: 'Action Card generated with ' + toolArgs.priority + ' priority and sent to Action Center.'
       })
     }
 
     case 'set_goal_schedule': {
-      const reviewHours = Math.max(toolArgs.hours_until_next_review || 4, 4)
-      const now = new Date()
-      const nextReview = new Date(now.getTime() + reviewHours * 60 * 60 * 1000)
+      var reviewHours = Math.max(toolArgs.hours_until_next_review || 4, 4)
+      var nowDate = new Date()
+      var nextReview = new Date(nowDate.getTime() + reviewHours * 60 * 60 * 1000)
 
-      // If background, auto-approve the recurrence. If not, it needs user approval.
-      const status = isBackground ? 'ACTIVE' : 'PENDING_APPROVAL'
+      var goalStatus = isBackground ? 'ACTIVE' : 'PENDING_APPROVAL'
 
-      const { data, error } = await supabaseClient
-        .from('goal_schedules')
-        .insert({
-          user_id: userId,
-          session_id: sessionId,
-          target_id: toolArgs.target_id,
-          target_level: toolArgs.target_level,
-          goal_description: toolArgs.goal_description,
-          metrics_snapshot: toolArgs.current_metrics_snapshot,
-          next_run_at: nextReview.toISOString(),
-          status: status
-        })
-        .select()
-        .single()
+      var goalRes = await supabaseClient.from('goal_schedules').insert({
+        user_id: userId,
+        session_id: sessionId,
+        target_id: toolArgs.target_id,
+        target_level: toolArgs.target_level,
+        goal_description: toolArgs.goal_description,
+        next_run_at: nextReview.toISOString(),
+        status: goalStatus
+      }).select().single()
         
-      if (error) return JSON.stringify({ error: error.message })
+      if (goalRes.error) return JSON.stringify({ error: goalRes.error.message })
+      
+      var goalMsg = isBackground
+        ? 'Recurring Goal automatically scheduled for next execution at ' + nextReview.toISOString() + '.'
+        : 'Goal Schedule proposed for ' + toolArgs.target_level + ' and sent to user for approval.';
       
       return JSON.stringify({ 
         type: 'GOAL_PROPOSAL', 
-        card: data, 
+        card: goalRes.data, 
         success: true, 
-        message: isBackground ? 'Recurring Goal automatically scheduled for next execution at ' + nextReview.toISOString() + '.' : 'Goal Schedule proposed for ' + toolArgs.target_level + ' and sent to user for approval.'
+        message: goalMsg
       })
     }
 
     default:
-      return JSON.stringify({ error: `Unknown tool: ${toolName}` })
+      return JSON.stringify({ error: 'Unknown tool: ' + toolName })
   }
 }
 
-// ============================================================
-// MAIN HANDLER
-// ============================================================
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
   try {
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+    var supabaseClient = createClient(
+      Deno.env.get('SUPABASE_URL') || '',
+      Deno.env.get('SUPABASE_ANON_KEY') || '',
       { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
     )
 
-    const { data: { user }, error: userError } = await supabaseClient.auth.getUser()
-    if (userError || !user) throw new Error('Unauthorized')
+    var userRes = await supabaseClient.auth.getUser()
+    if (userRes.error || !userRes.data.user) throw new Error('Unauthorized')
+    var user = userRes.data.user
 
-    const { prompt, session_id, is_background, historical_context } = await req.json()
+    var body = await req.json()
+    var prompt = body.prompt
+    var session_id = body.session_id
+    var is_background = body.is_background
+    var historical_context = body.historical_context
+    
     if (!prompt) throw new Error('Prompt is required')
     if (!session_id) throw new Error('session_id is required')
 
-    // Fetch API Key
-    const { data: settings } = await supabaseClient.from('user_settings').select('openrouter_key, preferred_model').eq('id', user.id).single()
-    if (!settings?.openrouter_key) throw new Error('OpenRouter API Key not found. Please save it in Settings.')
+    var settingsRes = await supabaseClient.from('user_settings').select('openrouter_key, preferred_model').eq('id', user.id).single()
+    if (!settingsRes.data || !settingsRes.data.openrouter_key) throw new Error('OpenRouter API Key not found. Please save it in Settings.')
+    var settings = settingsRes.data
 
-    // Fetch Business Profile for Context
-    const { data: businessProfile } = await supabaseClient.from('business_profiles').select('*').eq('user_id', user.id).single()
+    var openRouterKey = String(settings.openrouter_key).trim()
+    if (!openRouterKey.startsWith('sk-or-')) {
+      throw new Error('Invalid OpenRouter API Key format. Your key must start with "sk-or-". Please go to https://openrouter.ai/settings/keys to get a valid key and update it in Settings.')
+    }
 
-    const openRouterKey = settings.openrouter_key
-    const model = settings.preferred_model || 'google/gemini-3.6-flash'
+    var profileRes = await supabaseClient.from('business_profiles').select('*').eq('user_id', user.id).single()
+    var businessProfile = profileRes.data
 
-    const { error: userMsgErr } = await supabaseClient.from('chat_messages').insert({
-      session_id,
+    var model = settings.preferred_model || 'google/gemini-2.5-flash'
+
+    var userMsgRes = await supabaseClient.from('chat_messages').insert({
+      session_id: session_id,
       user_id: user.id,
       role: 'user',
       content: prompt
     })
-    if (userMsgErr) throw new Error('Failed to save user message: ' + userMsgErr.message)
+    if (userMsgRes.error) throw new Error('Failed to save user message: ' + userMsgRes.error.message)
 
-    // 2. Fetch past chat history for this session (last 10 messages)
-    const { data: pastMessages } = await supabaseClient
-      .from('chat_messages')
-      .select('role, content')
+    var pastMsgRes = await supabaseClient
+      .from('chat_messages').select('role, content')
       .eq('session_id', session_id)
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .limit(10)
 
-    const history = (pastMessages || []).reverse().map(msg => ({
-      role: msg.role === 'agent' ? 'assistant' : 'user',
-      content: msg.content || ''
-    }))
+    var pastMessages = pastMsgRes.data || []
+    var history = pastMessages.reverse().map(function(msg: any) {
+      return {
+        role: msg.role === 'agent' ? 'assistant' : 'user',
+        content: msg.content || ''
+      }
+    })
 
-    // Build the conversation array: system prompt + chat history
-    const finalMessages: any[] = [
+    var finalMessages: any[] = [
       { role: 'system', content: generateSystemPrompt(businessProfile, historical_context) },
-      ...history
     ]
+    for (var h = 0; h < history.length; h++) {
+      finalMessages.push(history[h])
+    }
 
-    const toolExecutions: any[] = []
-    const thinkingSteps: string[] = ['Initializing Context-Aware OODA Loop...']
-    if (!businessProfile) thinkingSteps.push('WARNING: No Business Profile found. Agent is running without context.')
-    else thinkingSteps.push('Loaded Business Profile: ' + businessProfile.business_name + ' (' + businessProfile.country + ')')
+    var toolExecutions: any[] = []
+    var thinkingSteps: string[] = ['Initializing Context-Aware OODA Loop...']
+    if (!businessProfile) {
+      thinkingSteps.push('WARNING: No Business Profile found. Agent is running without context.')
+    } else {
+      thinkingSteps.push('Loaded Business Profile: ' + businessProfile.business_name + ' (' + businessProfile.country + ')')
+    }
 
-    let proposals: any[] = []
-    const MAX_ITERATIONS = 6
-    let finalContent = ''
+    var proposals: any[] = []
+    var MAX_ITERATIONS = 6
+    var finalContent = ''
 
-    for (let i = 0; i < MAX_ITERATIONS; i++) {
+    for (var i = 0; i < MAX_ITERATIONS; i++) {
       thinkingSteps.push('Iteration ' + (i + 1) + ': Reasoning with ' + model + '...')
 
-      const openRouterResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      var openRouterResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Authorization': 'Bearer ' + openRouterKey,
@@ -404,30 +409,45 @@ serve(async (req) => {
           model: model,
           messages: finalMessages,
           tools: AGENT_TOOLS,
-          tool_choice: 'auto'
+          tool_choice: 'auto',
+          max_tokens: 4096
         })
       })
 
-      if (!openRouterResponse.ok) throw new Error('OpenRouter Error: ' + await openRouterResponse.text())
+      if (!openRouterResponse.ok) {
+        var errText = await openRouterResponse.text()
+        var statusCode = openRouterResponse.status
+        
+        if (statusCode === 401) {
+          throw new Error('OpenRouter Authentication Failed (401). Your API key may be invalid or expired. Please go to https://openrouter.ai/settings/keys, generate a new key (starts with sk-or-), and update it in Settings.')
+        } else if (statusCode === 402) {
+          throw new Error('OpenRouter Insufficient Credits (402). Please add credits at https://openrouter.ai/settings/credits or switch to a free model.')
+        } else if (statusCode === 429) {
+          throw new Error('OpenRouter Rate Limited (429). Too many requests. Please wait a moment and try again.')
+        } else {
+          throw new Error('OpenRouter Error (' + statusCode + '): ' + errText)
+        }
+      }
 
-      const aiData = await openRouterResponse.json()
-      const assistantMessage = aiData.choices[0].message
+      var aiData = await openRouterResponse.json()
+      var assistantMessage = aiData.choices[0].message
       finalMessages.push(assistantMessage)
 
       if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
-        for (const toolCall of assistantMessage.tool_calls) {
-          const toolName = toolCall.function.name
-          let toolArgs = {}
-          try { toolArgs = JSON.parse(toolCall.function.arguments || '{}') } catch {}
+        for (var t = 0; t < assistantMessage.tool_calls.length; t++) {
+          var toolCall = assistantMessage.tool_calls[t]
+          var toolName = toolCall.function.name
+          var toolArgs: any = {}
+          try { toolArgs = JSON.parse(toolCall.function.arguments || '{}') } catch(e) {}
 
           thinkingSteps.push('Executing Tool: ' + toolName)
 
-          const toolResult = await executeTool(toolName, toolArgs, supabaseClient, user.id, session_id, !!is_background)
+          var toolResult = await executeTool(toolName, toolArgs, supabaseClient, user.id, session_id, !!is_background)
 
           try {
-            const parsed = JSON.parse(toolResult)
+            var parsed = JSON.parse(toolResult)
             if (parsed.type === 'PROPOSAL' || parsed.type === 'GOAL_PROPOSAL') proposals.push(parsed)
-          } catch {}
+          } catch(e) {}
 
           toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult.substring(0, 500), status: 'success' })
           finalMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResult })
@@ -442,12 +462,11 @@ serve(async (req) => {
     await supabaseClient.from('agent_logs').insert({
       user_id: user.id,
       action: 'CONTEXTUAL_OODA_CYCLE',
-      details: { prompt, model, iterations: toolExecutions.length, proposals: proposals.length }
+      details: { prompt: prompt, model: model, iterations: toolExecutions.length, proposals: proposals.length }
     })
 
-    // 3. Save the final agent response to history
-    const { error: agentMsgErr } = await supabaseClient.from('chat_messages').insert({
-      session_id,
+    var agentMsgRes2 = await supabaseClient.from('chat_messages').insert({
+      session_id: session_id,
       user_id: user.id,
       role: 'agent',
       content: finalContent,
@@ -455,10 +474,10 @@ serve(async (req) => {
       tool_calls: toolExecutions,
       proposal: proposals.length > 0 ? proposals[0] : null
     })
-    if (agentMsgErr) throw new Error('Failed to save agent message: ' + agentMsgErr.message)
+    if (agentMsgRes2.error) throw new Error('Failed to save agent message: ' + agentMsgRes2.error.message)
 
     return new Response(
-      JSON.stringify({ response: finalContent, thinkingSteps, toolCalls: toolExecutions, proposals }),
+      JSON.stringify({ response: finalContent, thinkingSteps: thinkingSteps, toolCalls: toolExecutions, proposals: proposals }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   } catch (error: any) {
