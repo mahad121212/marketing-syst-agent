@@ -119,6 +119,7 @@ function generateSystemPrompt(businessProfile: any, historical_context: string) 
     '- 3-7 days old: OBSERVATION ONLY unless catastrophically bad.',
     '- 7-14 days old: ACTIONABLE with caution.',
     '- > 14 days old: FULLY ACTIONABLE.',
+    '*(Note: Creating NEW campaigns/ad sets via CREATE_NEW is EXEMPT from Temporal Discipline since they do not have an age yet. You are fully allowed to create new items if it aligns with the strategy.)*',
     '',
     '## Missing Absolute Targets (CRITICAL)',
     'If the Business Profile shows "Not provided" for Target CPA or ROAS, DO NOT refuse to make decisions. You MUST shift to RELATIVE evaluation:',

@@ -131,6 +131,8 @@ You MUST check the \`age_days\` of every item before reasoning about it.
 - **7-14 days old**: ACTIONABLE with caution. You have enough data to make informed decisions.
 - **> 14 days old**: FULLY ACTIONABLE. You have mature data to make confident scaling or pruning decisions.
 
+*(Note: Creating NEW campaigns/ad sets via CREATE_NEW is EXEMPT from Temporal Discipline since they do not have an age yet. You are fully allowed to create new items if it aligns with the strategy.)*
+
 ## Missing Absolute Targets (CRITICAL)
 If the user's Business Profile shows "Not provided" for Target CPA or ROAS, DO NOT refuse to make decisions or ask the user for numbers. You MUST shift to RELATIVE evaluation:
 - Compare campaigns and ad sets against each other. Identify the lowest CPA or highest ROAS within the account and treat the best performer as the baseline.
