@@ -112,9 +112,9 @@ BUSINESS CONTEXT:
 - Industry: ${businessProfile.industry}
 - Description: ${businessProfile.business_description}
 - Market: ${businessProfile.country} (${businessProfile.currency})
-- Target CPA: ${businessProfile.target_cpa} ${businessProfile.currency}
-- Target ROAS: ${businessProfile.target_roas}x
-- Budget Cap: ${businessProfile.monthly_ad_budget} ${businessProfile.currency}/mo
+- Target CPA: ${businessProfile.target_cpa ? businessProfile.target_cpa + ' ' + (businessProfile.currency || 'USD') : 'Not provided'}
+- Target ROAS: ${businessProfile.target_roas ? businessProfile.target_roas + 'x' : 'Not provided'}
+- Budget Cap: ${businessProfile.monthly_ad_budget ? businessProfile.monthly_ad_budget + ' ' + (businessProfile.currency || 'USD') + '/mo' : 'Not provided'}
 - Stage: ${businessProfile.business_stage}
 - Additional Rules: ${businessProfile.additional_context || 'None'}
 `;

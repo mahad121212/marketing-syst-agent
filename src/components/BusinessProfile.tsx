@@ -15,6 +15,10 @@ export const BusinessProfile: React.FC<BusinessProfileProps> = ({ onSave }) => {
   const [monthlyAdBudget, setMonthlyAdBudget] = useState(1000);
   const [targetCpa, setTargetCpa] = useState(30);
   const [targetRoas, setTargetRoas] = useState(3);
+  const [useMonthlyBudget, setUseMonthlyBudget] = useState(false);
+  const [useTargetCpa, setUseTargetCpa] = useState(false);
+  const [useTargetRoas, setUseTargetRoas] = useState(false);
+  
   const [businessStage, setBusinessStage] = useState('NEW');
   const [additionalContext, setAdditionalContext] = useState('');
   
@@ -39,8 +43,11 @@ export const BusinessProfile: React.FC<BusinessProfileProps> = ({ onSave }) => {
             setCountry(data.country || 'US');
             setCurrency(data.currency || 'USD');
             setMonthlyAdBudget(data.monthly_ad_budget || 1000);
+            setUseMonthlyBudget(data.monthly_ad_budget != null);
             setTargetCpa(data.target_cpa || 30);
+            setUseTargetCpa(data.target_cpa != null);
             setTargetRoas(data.target_roas || 3);
+            setUseTargetRoas(data.target_roas != null);
             setBusinessStage(data.business_stage || 'NEW');
             setAdditionalContext(data.additional_context || '');
           }
@@ -67,11 +74,11 @@ export const BusinessProfile: React.FC<BusinessProfileProps> = ({ onSave }) => {
           business_name: businessName,
           industry,
           business_description: businessDescription,
-          country,
-          currency,
-          monthly_ad_budget: monthlyAdBudget,
-          target_cpa: targetCpa,
-          target_roas: targetRoas,
+          country: country || 'US',
+          currency: currency || 'USD',
+          monthly_ad_budget: useMonthlyBudget ? monthlyAdBudget : null,
+          target_cpa: useTargetCpa ? targetCpa : null,
+          target_roas: useTargetRoas ? targetRoas : null,
           business_stage: businessStage,
           additional_context: additionalContext,
         });
@@ -150,16 +157,25 @@ export const BusinessProfile: React.FC<BusinessProfileProps> = ({ onSave }) => {
           
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
             <div>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#d1d5db', marginBottom: '8px' }}>Target CPA</label>
-              <input type="number" required value={targetCpa} onChange={(e) => setTargetCpa(Number(e.target.value))} style={{ width: '100%', backgroundColor: '#111827', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', padding: '10px 14px', color: '#f3f4f6' }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                <input type="checkbox" checked={useTargetCpa} onChange={(e) => setUseTargetCpa(e.target.checked)} />
+                <label style={{ fontSize: '13px', fontWeight: 600, color: '#d1d5db' }}>Target CPA</label>
+              </div>
+              <input type="number" disabled={!useTargetCpa} required={useTargetCpa} value={targetCpa} onChange={(e) => setTargetCpa(Number(e.target.value))} style={{ width: '100%', backgroundColor: useTargetCpa ? '#111827' : '#374151', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', padding: '10px 14px', color: useTargetCpa ? '#f3f4f6' : '#9ca3af', opacity: useTargetCpa ? 1 : 0.5 }} />
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#d1d5db', marginBottom: '8px' }}>Target ROAS</label>
-              <input type="number" step="0.1" required value={targetRoas} onChange={(e) => setTargetRoas(Number(e.target.value))} style={{ width: '100%', backgroundColor: '#111827', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', padding: '10px 14px', color: '#f3f4f6' }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                <input type="checkbox" checked={useTargetRoas} onChange={(e) => setUseTargetRoas(e.target.checked)} />
+                <label style={{ fontSize: '13px', fontWeight: 600, color: '#d1d5db' }}>Target ROAS</label>
+              </div>
+              <input type="number" step="0.1" disabled={!useTargetRoas} required={useTargetRoas} value={targetRoas} onChange={(e) => setTargetRoas(Number(e.target.value))} style={{ width: '100%', backgroundColor: useTargetRoas ? '#111827' : '#374151', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', padding: '10px 14px', color: useTargetRoas ? '#f3f4f6' : '#9ca3af', opacity: useTargetRoas ? 1 : 0.5 }} />
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#d1d5db', marginBottom: '8px' }}>Monthly Budget Cap</label>
-              <input type="number" required value={monthlyAdBudget} onChange={(e) => setMonthlyAdBudget(Number(e.target.value))} style={{ width: '100%', backgroundColor: '#111827', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', padding: '10px 14px', color: '#f3f4f6' }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                <input type="checkbox" checked={useMonthlyBudget} onChange={(e) => setUseMonthlyBudget(e.target.checked)} />
+                <label style={{ fontSize: '13px', fontWeight: 600, color: '#d1d5db' }}>Monthly Budget Cap</label>
+              </div>
+              <input type="number" disabled={!useMonthlyBudget} required={useMonthlyBudget} value={monthlyAdBudget} onChange={(e) => setMonthlyAdBudget(Number(e.target.value))} style={{ width: '100%', backgroundColor: useMonthlyBudget ? '#111827' : '#374151', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', padding: '10px 14px', color: useMonthlyBudget ? '#f3f4f6' : '#9ca3af', opacity: useMonthlyBudget ? 1 : 0.5 }} />
             </div>
           </div>
         </div>
