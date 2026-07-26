@@ -290,10 +290,23 @@ export const App: React.FC = () => {
       setMessages((prev) => [...prev, agentResponse]);
     } catch (err: any) {
       console.error('Agent execution failed:', err);
+      // Try to extract the actual error from the Edge Function response
+      let errorDetail = '';
+      if (err?.context?.body) {
+        try {
+          const reader = err.context.body.getReader();
+          const decoder = new TextDecoder();
+          const { value } = await reader.read();
+          const bodyText = decoder.decode(value);
+          const bodyJson = JSON.parse(bodyText);
+          if (bodyJson.error) errorDetail = bodyJson.error;
+        } catch(e) { /* ignore parse errors */ }
+      }
+      const displayError = errorDetail || err.message || 'Unknown error';
       const errorMsg: AgentMessage = {
         id: `err-${Date.now()}`,
         sender: 'agent',
-        content: `Error connecting to Agent Edge Function: ${err.message}. Make sure you have saved your OpenRouter API Key in Settings and the Edge Function is deployed.`,
+        content: `⚠️ **Agent Error:** ${displayError}`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
       setMessages((prev) => [...prev, errorMsg]);
