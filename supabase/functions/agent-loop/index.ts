@@ -96,6 +96,65 @@ const AGENT_TOOLS = [
         required: ['target_id', 'target_level', 'reason']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_account_summary_snapshots',
+      description: 'Fetches the 2 most recent snapshots for EVERY campaign in the account. Use this for broad account-level analysis when the user asks about overall performance.',
+      parameters: { type: 'object', properties: {}, required: [] }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_campaign',
+      description: 'Creates a brand new campaign in the ad account. Use this when the user asks to create a new campaign, or when you identify a strategic need for one. The campaign starts in PAUSED status so the user can review it.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Campaign name, e.g. "Summer Sale - Conversions"' },
+          daily_budget: { type: 'number', description: 'Daily budget in the account currency.' },
+          targeting: { type: 'object', description: 'Targeting config: { age_range, gender, interests, locations, custom_audiences }' },
+          objective: { type: 'string', description: 'Campaign objective, e.g. CONVERSIONS, TRAFFIC, REACH, AWARENESS' }
+        },
+        required: ['name', 'daily_budget']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_ad_set',
+      description: 'Creates a new ad set under an existing campaign. Use this to segment audiences or test different targeting within a campaign.',
+      parameters: {
+        type: 'object',
+        properties: {
+          campaign_id: { type: 'string', description: 'The UUID of the parent campaign.' },
+          name: { type: 'string', description: 'Ad set name, e.g. "Males 25-34 Interest Health"' },
+          targeting: { type: 'object', description: 'Targeting config for this ad set: { age_range, gender, interests, locations }' }
+        },
+        required: ['campaign_id', 'name']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_ad',
+      description: 'Creates a new ad under an existing ad set. Use this to test different creatives, copy, or CTAs within an ad set.',
+      parameters: {
+        type: 'object',
+        properties: {
+          ad_set_id: { type: 'string', description: 'The UUID of the parent ad set.' },
+          name: { type: 'string', description: 'Ad name, e.g. "Carousel - Summer Promo v1"' },
+          copy: { type: 'string', description: 'The ad copy / primary text.' },
+          cta: { type: 'string', description: 'Call to action, e.g. SHOP_NOW, LEARN_MORE, SIGN_UP' },
+          creative_url: { type: 'string', description: 'URL to the creative image or video (optional).' }
+        },
+        required: ['ad_set_id', 'name', 'copy']
+      }
+    }
   }
 ]
 
@@ -131,12 +190,14 @@ You MUST check the \`age_days\` of every item before reasoning about it.
 - **7-14 days old**: ACTIONABLE with caution. You have enough data to make informed decisions.
 - **> 14 days old**: FULLY ACTIONABLE. You have mature data to make confident scaling or pruning decisions.
 
-## Proactive Creation (CREATE_NEW)
-You are empowered to proactively create new campaigns, ad sets, or ads using the `CREATE_NEW` action type. You should do this when:
-- The user explicitly requests a new campaign, ad set, or ad.
-- You identify an untapped audience or a new strategic angle based on the Business Profile.
-- Current campaigns are fatigued and a fresh structure is needed.
-When proposing a new entity, provide the complete JSON structure in `proposed_changes` (budget, targeting, ad copy, formats, etc.) and pass "NEW" for the `target_id`. Do NOT tell the user to do it manually; YOU must propose the action card.
+## Proactive Creation
+You have dedicated tools to create new campaigns, ad sets, and ads:
+- \`create_campaign\`: Creates a new campaign in PAUSED status. Use when the user asks for a new campaign, or when you identify a strategic need.
+- \`create_ad_set\`: Creates a new ad set under a campaign. Use to segment audiences or test new targeting.
+- \`create_ad\`: Creates a new ad under an ad set. Use to test creatives, copy, or CTAs.
+
+When the user asks you to create something new, YOU MUST use these tools to actually create the entities. Do NOT tell the user to go to Meta Ads Manager and do it themselves. You are the media buyer — you do the work.
+Always provide a full campaign structure when asked: campaign -> at least one ad set -> at least one ad.
 
 ## Missing Absolute Targets (CRITICAL)
 If the user's Business Profile shows "Not provided" for Target CPA or ROAS, DO NOT refuse to make decisions or ask the user for numbers. You MUST shift to RELATIVE evaluation:
@@ -328,8 +389,66 @@ async function executeTool(
       })
     }
 
+    case 'get_account_summary_snapshots': {
+      var userCampaignsRes = await supabaseClient.from('campaigns').select('id, name').eq('user_id', userId)
+      var userCampaigns = userCampaignsRes.data || []
+      var summaryResult: any[] = []
+      for (var ci = 0; ci < userCampaigns.length; ci++) {
+        var campaign = userCampaigns[ci]
+        var campSnapsRes = await supabaseClient.from('metrics_snapshots').select('*').eq('target_id', campaign.id).order('created_at', { ascending: false }).limit(2)
+        summaryResult.push({ campaign_id: campaign.id, campaign_name: campaign.name, snapshots: campSnapsRes.data || [] })
+      }
+      return JSON.stringify({ account_summary: summaryResult, total_campaigns: userCampaigns.length, note: '2 most recent snapshots per campaign. Use get_state_snapshots for deeper timeline.' })
+    }
+
+    case 'create_campaign': {
+      var newCampaign = await supabaseClient.from('campaigns').insert({
+        user_id: userId,
+        name: toolArgs.name,
+        status: 'PAUSED',
+        daily_budget: toolArgs.daily_budget,
+        targeting: toolArgs.targeting || {},
+        performance_metrics: { spend: 0, impressions: 0, ctr: 0, cpc: 0, objective: toolArgs.objective || 'CONVERSIONS' }
+      }).select().single()
+      if (newCampaign.error) return JSON.stringify({ error: newCampaign.error.message })
+      await supabaseClient.from('agent_memory').insert({
+        user_id: userId, campaign_id: newCampaign.data.id,
+        decision_made: 'CREATED CAMPAIGN: ' + toolArgs.name,
+        reasoning_snapshot: 'New campaign created with daily budget ' + toolArgs.daily_budget + '. Status: PAUSED.'
+      })
+      return JSON.stringify({ success: true, campaign: newCampaign.data, message: 'Campaign "' + toolArgs.name + '" created successfully in PAUSED status. Now create ad sets and ads under it.' })
+    }
+
+    case 'create_ad_set': {
+      var newAdSet = await supabaseClient.from('ad_sets').insert({
+        user_id: userId,
+        campaign_id: toolArgs.campaign_id,
+        name: toolArgs.name,
+        targeting: toolArgs.targeting || {},
+        status: 'ACTIVE',
+        performance_metrics: { spend: 0, impressions: 0, ctr: 0, cpc: 0 }
+      }).select().single()
+      if (newAdSet.error) return JSON.stringify({ error: newAdSet.error.message })
+      return JSON.stringify({ success: true, ad_set: newAdSet.data, message: 'Ad Set "' + toolArgs.name + '" created under campaign ' + toolArgs.campaign_id + '. Now create ads under it.' })
+    }
+
+    case 'create_ad': {
+      var newAd = await supabaseClient.from('ads').insert({
+        user_id: userId,
+        ad_set_id: toolArgs.ad_set_id,
+        name: toolArgs.name,
+        copy: toolArgs.copy || '',
+        cta: toolArgs.cta || 'SHOP_NOW',
+        creative_url: toolArgs.creative_url || '',
+        status: 'ACTIVE',
+        performance_metrics: { spend: 0, impressions: 0, ctr: 0, cpc: 0 }
+      }).select().single()
+      if (newAd.error) return JSON.stringify({ error: newAd.error.message })
+      return JSON.stringify({ success: true, ad: newAd.data, message: 'Ad "' + toolArgs.name + '" created under ad set ' + toolArgs.ad_set_id + '.' })
+    }
+
     default:
-      return JSON.stringify({ error: `Unknown tool: ${toolName}` })
+      return JSON.stringify({ error: 'Unknown tool: ' + toolName })
   }
 }
 
