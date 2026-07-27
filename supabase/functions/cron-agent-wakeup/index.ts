@@ -321,8 +321,9 @@ serve(async (req) => {
     for (const goal of (ripeGoals || [])) {
       console.log('Processing goal ' + goal.id + ' for user ' + goal.user_id)
       
-      // Mark this goal as COMPLETED so it doesn't run again. The agent must schedule a new one.
-      await supabaseClient.from('goal_schedules').update({ status: 'COMPLETED' }).eq('id', goal.id)
+      // Mark this goal as COMPLETED so it doesn't run again. The agent must reschedule a new one.
+      const { error: completeErr } = await supabaseClient.from('goal_schedules').update({ status: 'COMPLETED' }).eq('id', goal.id)
+      if (completeErr) console.error('Failed to mark goal as completed:', completeErr.message)
 
       // Save the trigger event to the chat timeline so both user and follow-up agents have context
       const triggerContent = `🤖 [Background Goal Triggered]\nGoal: "${goal.goal_description}"\nTarget: ${goal.target_level} (${goal.target_id})`
