@@ -17,6 +17,7 @@ export const ActionCenter: React.FC = () => {
   const [actions, setActions] = useState<ActionCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [autoExecute, setAutoExecute] = useState(false);
+  const [executingId, setExecutingId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchActions();
@@ -44,17 +45,26 @@ export const ActionCenter: React.FC = () => {
   };
 
   const handleApprove = async (id: string) => {
+    setExecutingId(id);
     try {
-      const { error } = await supabase
-        .from('action_cards')
-        .update({ status: 'APPROVED', resolved_at: new Date().toISOString() })
-        .eq('id', id);
-        
-      if (error) throw error;
-      // In a real app, this would also trigger the Edge Function to execute the change
+      // 1. Invoke the meta-action-executor Edge Function to push the change to Meta Ads Manager
+      const { data, error: execError } = await supabase.functions.invoke('meta-action-executor', {
+        body: { action_card_id: id }
+      });
+      
+      if (execError) throw execError;
+      if (data && !data.success) {
+        throw new Error(data.error || 'Failed to execute action on Meta.');
+      }
+
+      // 2. Local status is updated to APPROVED inside the Edge Function on success, so we just remove it from UI
       setActions(actions.filter(a => a.id !== id));
-    } catch (err) {
-      console.error('Failed to approve action:', err);
+      alert(`Action successfully executed on Meta Ads Manager! Real ID: ${data?.meta_id || 'N/A'}`);
+    } catch (err: any) {
+      console.error('Failed to approve/execute action:', err);
+      alert('Failed to execute action on Meta: ' + (err.message || err.error_description || 'Unknown error'));
+    } finally {
+      setExecutingId(null);
     }
   };
 
@@ -129,23 +139,28 @@ export const ActionCenter: React.FC = () => {
 
                 <button
                   onClick={() => handleApprove(action.id)}
+                  disabled={executingId === action.id}
                   style={{
-                    backgroundColor: '#10b981',
-                    color: '#ffffff',
+                    backgroundColor: executingId === action.id ? '#1f2937' : '#10b981',
+                    color: executingId === action.id ? '#9ca3af' : '#ffffff',
                     border: 'none',
                     padding: '10px 16px',
                     borderRadius: '8px',
                     fontWeight: 700,
                     fontSize: '13px',
-                    cursor: 'pointer',
+                    cursor: executingId === action.id ? 'not-allowed' : 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                     gap: '6px',
                     flexShrink: 0
                   }}
                 >
-                  <Play style={{ width: '14px', height: '14px', fill: '#ffffff' }} />
-                  Approve Action
+                  {executingId === action.id ? (
+                    <Loader2 className="animate-spin" style={{ width: '14px', height: '14px' }} />
+                  ) : (
+                    <Play style={{ width: '14px', height: '14px', fill: '#ffffff' }} />
+                  )}
+                  <span>{executingId === action.id ? 'Executing...' : 'Approve Action'}</span>
                 </button>
 
               </div>
