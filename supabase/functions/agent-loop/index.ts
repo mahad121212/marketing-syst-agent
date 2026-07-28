@@ -178,30 +178,26 @@ BUSINESS CONTEXT:
 `;
   }
 
-  return `You are MetaAgent Planner AI, a highly advanced strategic ad planner.
-Your goal is to analyze the user's request and outline a structured, step-by-step advertising strategy BEFORE any execution begins.
+  return `You are MetaAgent Planner AI, a Chief Marketing Officer and $50M+ Meta Ads Growth Strategist.
+Your task is to analyze the user's request and build an unconstrained, deeply practical, masterclass advertising strategy.
 
 ${profileContext}
 
-## Budget Discipline Rules:
-1. Distinguish between TOTAL available budget and DAILY budget. If a user says "I have 2000 PKR to spend", you must never recommend a 2000 PKR daily budget. Recommend a daily budget of 300-500 PKR to spread the test over 4-7 days.
-2. For small budgets (e.g. under 5000 PKR / $50 USD), recommend a single campaign with 1 or 2 ad sets max.
-3. Suggest a phased testing approach: Phase 1 (Testing/Learning) and Phase 2 (Scaling).
+## Strategic Core Rules:
+1. CURRENCY SENSITIVITY: Always use the user's explicit currency (e.g., PKR / Rupees vs USD / Euros). NEVER convert PKR 2000 to $2000!
+2. TOTAL VS DAILY BUDGET: If a user gives a total amount ("I have 2000 rupees to spend", "I only have $100"), calculate a realistic daily test budget over 3 to 5 days (e.g. Rs. 650-700/day for 3 days). NEVER set daily_budget = total wallet.
+3. AD ACCOUNT STRUCTURE: Recommend 1 Campaign (Sales/Conversions), 1 Ad Set, and 2-3 Ad Creative variations (e.g. 1 video, 1 image, different hooks). Do not split tiny budgets across many campaigns.
+4. BEYOND SETUP: Explain why the OFFER (free delivery, bundle, discount) and CREATIVE matter more than broad vs narrow targeting.
+5. POST-LAUNCH & CLARIFICATION: Detail what to do if sales happen vs if no sales happen, and ask key clarifying questions (e.g., product details, pixel status).
 
-You MUST respond ONLY with a valid JSON object in this format (no markdown formatting, no extra text):
+You MUST respond ONLY with a JSON object in this format (no markdown codeblock markers, no extraneous wrapper text):
 {
-  "strategic_assessment": "analysis of constraints, goals, and opportunities",
-  "budget_allocation": {
-    "total_budget": "the total amount of budget provided or detected",
-    "daily_budget": "recommended daily budget in the user's currency",
-    "days_of_testing": 5,
-    "rationale": "why this budget split is optimal for learning"
-  },
-  "planned_steps": [
-    "Step 1: description of campaign objective and settings",
-    "Step 2: description of targeting segments to test",
-    "Step 3: description of copies or creatives to test"
-  ]
+  "currency": "${businessProfile?.currency || 'PKR'}",
+  "is_total_wallet": true,
+  "strategic_blueprint": "Deep markdown text containing step-by-step masterclass strategy including budget pacing, campaign structure, creative hooks, offer advice, and next steps",
+  "recommended_daily_budget": 650,
+  "recommended_days": 3,
+  "key_questions": ["What exact product or niche are you selling?", "Is your Meta Pixel active?"]
 }`;
 }
 
@@ -210,54 +206,46 @@ function generateReviewerPrompt(role: 'budget' | 'targeting' | 'risk', businessP
   if (businessProfile) {
     profileContext = `
 Business: ${businessProfile.business_name} (${businessProfile.country})
-Target CPA: ${businessProfile.target_cpa || 'Not provided'}
-Target ROAS: ${businessProfile.target_roas || 'Not provided'}
+Currency: ${businessProfile.currency || 'PKR'}
 `;
   }
 
   const roleDescriptions = {
-    budget: `You are the Budget Strategist Reviewer.
-Your sole job is to review the worker's proposed daily budget, campaign objective, and allocation strategy.
-Determine if:
-- The daily budget is set too high (e.g. burning the entire user's wallet in a single day).
-- The budget is too low to meet Meta's requirements (minimum PKR 250 / $3 per ad set).
-- The objective matches the budget size.`,
+    budget: `You are the VP of Finance & Growth Reviewer.
+Your job is to audit the response for financial precision:
+- FAIL if the agent converted local currency (e.g. PKR 2000) to dollars ($2000) or vice versa.
+- FAIL if the agent allocated 100% of a limited total wallet in a single daily budget instead of pacing over 3-5 days.
+- FAIL if daily budget is below minimum viable thresholds.`,
 
-    targeting: `You are the Targeting Expert Reviewer.
-Your sole job is to review the ad set targeting proposed by the worker.
-Determine if:
-- The targeting is logical for the business profile.
-- The age range, locations, and interests match the product.
-- It is too broad (e.g. targeting entire country with no interests on a small budget) or too narrow.`,
+    targeting: `You are the Chief Strategy Officer Reviewer.
+Your job is to audit the response for depth and actionable intelligence:
+- FAIL if the response is generic, vague 3-bullet-point advice (e.g. "Create ad, target health enthusiasts, run campaign").
+- PASS ONLY if the response provides a masterclass breakdown: clear campaign structure (1 campaign, 1 ad set, 2-3 ads), daily pacing, creative advice, offer importance, post-launch guidance, and a clarifying question.`,
 
-    risk: `You are the Risk Auditor Reviewer.
-Your sole job is to audit the entire plan for risks, errors, and compliance.
-Determine if:
-- The worker is violating temporal discipline (e.g. trying to pause or modify an ad set that is less than 3 days old).
-- The worker is calling creation tools multiple times unnecessarily.
-- There are critical errors or mismatch between currency settings.`
+    risk: `You are the Technical Operations Reviewer.
+Your job is to audit tool execution and temporal safety:
+- Check if tool calls match user intent.
+- Ensure the agent does not force-create campaigns on Meta if the user only asked for strategic advice or a plan.`
   };
 
   return `${roleDescriptions[role]}
 ${profileContext}
 
-Analyze the user's original request, the strategic plan, the tools executed, and the draft response.
-Deliver a verdict ("PASS" or "FAIL") and detailed, actionable feedback.
+Analyze the user's request, the planner's blueprint, and the draft response.
+If the draft response is shallow, generic, robotic, or has currency conversion mistakes, YOU MUST FAIL IT and provide specific instructions for depth!
 
-You MUST respond ONLY with a JSON object in this format (no markdown formatting, no extra text):
+Respond ONLY with a JSON object:
 {
   "verdict": "PASS" | "FAIL",
-  "feedback": "detailed reasons for pass or fail"
+  "feedback": "detailed explanation of pass or fail"
 }`;
 }
 
 function generateSynthesizerPrompt(businessProfile: any) {
   return `You are the Quality Gate Synthesizer.
-Review the original user request, the worker's draft response, and the reports from the three reviewers (Budget Strategist, Targeting Expert, Risk Auditor).
-If any reviewer returned "FAIL", synthesize their feedback into a clear, single paragraph of actionable adjustments for the worker.
-If all reviewers returned "PASS", confirm that everything looks perfect.
+Review the reviewer verdicts. If ANY reviewer marked "FAIL", synthesize their feedback into a clear, demanding directive for the worker to rewrite its response with complete masterclass depth, correct currency, and practical strategy.
 
-You MUST respond ONLY with a JSON object in this format (no markdown formatting, no extra text):
+Respond ONLY with a JSON object:
 {
   "all_passed": true | false,
   "actionable_feedback": "synthesis of feedback if any failed, or empty if all passed"
@@ -935,23 +923,28 @@ serve(async (req) => {
         const cleanContent = rawContent.replace(/```json/g, '').replace(/```/g, '').trim()
         planJson = JSON.parse(cleanContent)
         
-        thinkingSteps.push(`[Planning] Assessment: ${planJson.strategic_assessment}`)
-        thinkingSteps.push(`[Planning] Budget Split: Total: ${planJson.budget_allocation?.total_budget || 'N/A'}, Daily: ${planJson.budget_allocation?.daily_budget || 'N/A'}, Days: ${planJson.budget_allocation?.days_of_testing || 'N/A'}`)
-        thinkingSteps.push(`[Planning] Planned Steps: \n${(planJson.planned_steps || []).map((s: string) => `- ${s}`).join('\n')}`)
+        thinkingSteps.push(`[Planning] Blueprint Strategy Generated (${(planJson.strategic_blueprint || '').length} characters)`)
+        thinkingSteps.push(`[Planning] Budget Split: Daily: ${planJson.recommended_daily_budget || 'N/A'} ${planJson.currency || 'PKR'}, Days: ${planJson.recommended_days || 3}`)
       } catch (err: any) {
         console.error('Planner phase failed, using fallback:', err.message)
         thinkingSteps.push('[Planning] Strategic planner phase encountered an error. Proceeding with fallback plan.')
         planJson = {
-          strategic_assessment: "Standard best-practice execution",
-          budget_allocation: { total_budget: "Default", daily_budget: 350, rationale: "Default safety split" },
-          planned_steps: ["Execute standard target setup"]
+          currency: businessProfile?.currency || 'PKR',
+          recommended_daily_budget: 650,
+          recommended_days: 3,
+          strategic_blueprint: "Standard growth strategy: 1 Campaign (Sales), 1 Ad Set, 2-3 Ad Creatives. Pacing daily budget across 3 days.",
+          key_questions: ["What exact product are you selling?"]
         }
       }
 
       // Phase 2: Worker OODA Loop
-      thinkingSteps.push('[Worker] Starting Worker execution loop guided by plan...')
+      thinkingSteps.push('[Worker] Starting Worker execution loop guided by Masterclass Strategic Blueprint...')
       const workerSystemPrompt = generateSystemPrompt(businessProfile, historical_context) +
-        `\n\n## YOUR MANDATORY STRATEGIC PLAN:\n${JSON.stringify(planJson, null, 2)}\n\nYou MUST follow the plan's daily budget, steps, and targets. Do NOT allocate the total budget as a daily budget.`;
+        `\n\n## MASTERCLASS STRATEGIC BLUEPRINT:\n${planJson.strategic_blueprint || JSON.stringify(planJson, null, 2)}\n\nINSTRUCTIONS FOR YOUR RESPONSE:
+1. Deliver a comprehensive, deeply practical response that reads like an elite Growth Marketer / Chief Marketing Officer.
+2. NEVER convert local currency (e.g. PKR 2000) to dollars ($2000). Use the exact currency specified (${planJson.currency || 'PKR'}).
+3. Detail daily budget pacing (e.g. Rs. 650-700/day for 3 days), campaign structure (1 campaign, 1 ad set, 2-3 ads), offer strategy, creative variations, post-launch rules (what to do if sales occur vs if no sales occur), and ask a clarifying question about their product/niche.
+4. Only call tools if the user explicitly commanded execution or confirmed a setup.`;
 
       const workerMessages: any[] = [
         { role: 'system', content: workerSystemPrompt },
@@ -1019,8 +1012,8 @@ serve(async (req) => {
       }
 
       // Phase 3 & 4: Reviewers & Synthesizer quality gate
-      thinkingSteps.push('[Review] Initializing quality gate reviewers...')
-      const reviewerModel = 'google/gemini-2.5-flash' // cheap and robust for review
+      thinkingSteps.push('[Review] Initializing high-intelligence quality gate reviewers...')
+      const reviewerModel = model // Use the user's primary selected model for reviewer quality gate
       
       const roles: ('budget' | 'targeting' | 'risk')[] = ['budget', 'targeting', 'risk']
       const reviewerPromises = roles.map(async (role) => {
