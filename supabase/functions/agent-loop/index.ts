@@ -815,6 +815,41 @@ async function executeTool(
   }
 }
 
+function isGeminiKey(key: string): boolean {
+  const k = key.trim()
+  return k.startsWith('AIzaSy') || k.startsWith('AQ.')
+}
+
+function getLLMRequestDetails(key: string, requestedModel: string) {
+  const k = key.trim()
+  if (isGeminiKey(k)) {
+    let mappedModel = 'gemini-2.5-flash'
+    if (requestedModel.toLowerCase().includes('pro')) {
+      mappedModel = 'gemini-2.5-pro'
+    }
+    return {
+      url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+      headers: {
+        'Authorization': 'Bearer ' + k,
+        'x-goog-api-key': k,
+        'Content-Type': 'application/json'
+      },
+      model: mappedModel
+    }
+  } else {
+    return {
+      url: 'https://openrouter.ai/api/v1/chat/completions',
+      headers: {
+        'Authorization': 'Bearer ' + k,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://metaagent.ai',
+        'X-Title': 'MetaAgent AI'
+      },
+      model: requestedModel
+    }
+  }
+}
+
 // ============================================================
 // MAIN HANDLER
 // ============================================================
@@ -900,16 +935,13 @@ serve(async (req) => {
       
       let planJson: any = null
       try {
-        const plannerRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        const reqDetails = getLLMRequestDetails(openRouterKey, model)
+        const plannerRes = await fetch(reqDetails.url, {
           method: 'POST',
-          headers: {
-            'Authorization': 'Bearer ' + openRouterKey,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://metaagent.ai',
-            'X-Title': 'MetaAgent AI'
-          },
+          headers: reqDetails.headers,
           body: JSON.stringify({
-            model: model,
+            model: reqDetails.model,
+            max_tokens: 2000,
             messages: [
               { role: 'system', content: generatePlannerPrompt(businessProfile, historical_context) },
               { role: 'user', content: prompt }
@@ -955,16 +987,13 @@ serve(async (req) => {
       for (let i = 0; i < MAX_ITERATIONS; i++) {
         thinkingSteps.push('[Worker] Iteration ' + (i + 1) + ': Reasoning with ' + model + '...')
 
-        const workerRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        const reqDetails = getLLMRequestDetails(openRouterKey, model)
+        const workerRes = await fetch(reqDetails.url, {
           method: 'POST',
-          headers: {
-            'Authorization': 'Bearer ' + openRouterKey,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://metaagent.ai',
-            'X-Title': 'MetaAgent AI'
-          },
+          headers: reqDetails.headers,
           body: JSON.stringify({
-            model: model,
+            model: reqDetails.model,
+            max_tokens: 2000,
             messages: workerMessages,
             tools: AGENT_TOOLS,
             tool_choice: 'auto'
@@ -1018,16 +1047,13 @@ serve(async (req) => {
       const roles: ('budget' | 'targeting' | 'risk')[] = ['budget', 'targeting', 'risk']
       const reviewerPromises = roles.map(async (role) => {
         try {
-          const reviewerRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          const reqDetails = getLLMRequestDetails(openRouterKey, reviewerModel)
+          const reviewerRes = await fetch(reqDetails.url, {
             method: 'POST',
-            headers: {
-              'Authorization': 'Bearer ' + openRouterKey,
-              'Content-Type': 'application/json',
-              'HTTP-Referer': 'https://metaagent.ai',
-              'X-Title': 'MetaAgent AI'
-            },
+            headers: reqDetails.headers,
             body: JSON.stringify({
-              model: reviewerModel,
+              model: reqDetails.model,
+              max_tokens: 1000,
               messages: [
                 { role: 'system', content: generateReviewerPrompt(role, businessProfile) },
                 { role: 'user', content: `Original request: ${prompt}\nPlanner Plan: ${JSON.stringify(planJson)}\nWorker Tools Executed: ${JSON.stringify(toolExecutions)}\nWorker Draft Response: ${finalContent}` }
@@ -1053,16 +1079,13 @@ serve(async (req) => {
       thinkingSteps.push('[Review] Synthesizing reviewer verdicts...')
       let synthJson = { all_passed: true, actionable_feedback: '' }
       try {
-        const synthRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        const reqDetails = getLLMRequestDetails(openRouterKey, reviewerModel)
+        const synthRes = await fetch(reqDetails.url, {
           method: 'POST',
-          headers: {
-            'Authorization': 'Bearer ' + openRouterKey,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://metaagent.ai',
-            'X-Title': 'MetaAgent AI'
-          },
+          headers: reqDetails.headers,
           body: JSON.stringify({
-            model: reviewerModel,
+            model: reqDetails.model,
+            max_tokens: 1000,
             messages: [
               { role: 'system', content: generateSynthesizerPrompt(businessProfile) },
               { role: 'user', content: `Original request: ${prompt}\nWorker Draft Response: ${finalContent}\nReviewer Feedback: ${JSON.stringify(reviews)}` }
@@ -1093,16 +1116,13 @@ serve(async (req) => {
         for (let i = 0; i < 3; i++) {
           thinkingSteps.push('[Revision] Worker Iteration ' + (i + 1) + ': Refining response...')
 
-          const revisionRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          const reqDetails = getLLMRequestDetails(openRouterKey, model)
+          const revisionRes = await fetch(reqDetails.url, {
             method: 'POST',
-            headers: {
-              'Authorization': 'Bearer ' + openRouterKey,
-              'Content-Type': 'application/json',
-              'HTTP-Referer': 'https://metaagent.ai',
-              'X-Title': 'MetaAgent AI'
-            },
+            headers: reqDetails.headers,
             body: JSON.stringify({
-              model: model,
+              model: reqDetails.model,
+              max_tokens: 2000,
               messages: workerMessages,
               tools: AGENT_TOOLS,
               tool_choice: 'auto'
@@ -1167,16 +1187,13 @@ serve(async (req) => {
       for (let i = 0; i < MAX_ITERATIONS; i++) {
         thinkingSteps.push('Iteration ' + (i + 1) + ': Reasoning with ' + model + '...')
 
-        const openRouterResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        const reqDetails = getLLMRequestDetails(openRouterKey, model)
+        const openRouterResponse = await fetch(reqDetails.url, {
           method: 'POST',
-          headers: {
-            'Authorization': 'Bearer ' + openRouterKey,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://metaagent.ai',
-            'X-Title': 'MetaAgent AI'
-          },
+          headers: reqDetails.headers,
           body: JSON.stringify({
-            model: model,
+            model: reqDetails.model,
+            max_tokens: 2000,
             messages: finalMessages,
             tools: AGENT_TOOLS,
             tool_choice: 'auto'
