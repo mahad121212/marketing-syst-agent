@@ -445,6 +445,7 @@ async function executeTool(
           objective: mappedObjective,
           status: 'PAUSED',
           daily_budget: budgetInCents,
+          bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
           special_ad_categories: ['NONE'],
           access_token: metaToken
         })
@@ -509,22 +510,28 @@ async function executeTool(
 
       // Create ad set on Meta
       const metaUrl = `https://graph.facebook.com/v21.0/${cleanId}/adsets`
+      const payload: any = {
+        campaign_id: campaign.meta_id,
+        name: toolArgs.name,
+        status: 'ACTIVE',
+        billing_event: 'IMPRESSIONS',
+        optimization_goal: 'LINK_CLICKS',
+        targeting: {
+          geo_locations: { countries: ['PK'] },
+          age_min: 18,
+          age_max: 65
+        },
+        access_token: metaToken
+      }
+
+      if (toolArgs.bid_amount) {
+        payload.bid_amount = Math.round(toolArgs.bid_amount * 100)
+      }
+
       const res = await fetch(metaUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          campaign_id: campaign.meta_id,
-          name: toolArgs.name,
-          status: 'ACTIVE',
-          billing_event: 'IMPRESSIONS',
-          optimization_goal: 'LINK_CLICKS',
-          targeting: {
-            geo_locations: { countries: ['PK'] },
-            age_min: 18,
-            age_max: 65
-          },
-          access_token: metaToken
-        })
+        body: JSON.stringify(payload)
       })
 
       const metaData = await res.json()
