@@ -430,6 +430,8 @@ export const App: React.FC = () => {
                     id: session.user.id,
                     openrouter_key: settings.openRouterKey,
                     preferred_model: settings.preferredModel,
+                    meta_access_token: settings.metaToken,
+                    meta_ad_account_id: settings.adAccountId,
                   });
                 if (error) throw error;
                 // Also update local state or show success toast if needed

@@ -13,6 +13,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onSave }) => {
   const [preferredModel, setPreferredModel] = useState('google/gemini-3.6-flash');
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   useEffect(() => {
     async function loadSettings() {
@@ -28,6 +30,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onSave }) => {
           if (data) {
             if (data.openrouter_key) setOpenRouterKey(data.openrouter_key);
             if (data.preferred_model) setPreferredModel(data.preferred_model);
+            if (data.meta_access_token) setMetaToken(data.meta_access_token);
+            if (data.meta_ad_account_id) setAdAccountId(data.meta_ad_account_id);
           }
         }
       } catch (err) {
@@ -38,6 +42,39 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onSave }) => {
     }
     loadSettings();
   }, []);
+
+  const handleTestConnection = async () => {
+    if (!metaToken || !adAccountId) {
+      setTestResult({ success: false, message: 'Please enter both Meta Access Token and Ad Account ID first.' });
+      return;
+    }
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('meta-test-connection', {
+        body: {
+          meta_access_token: metaToken,
+          meta_ad_account_id: adAccountId
+        }
+      });
+      if (error) throw error;
+      if (data && data.success) {
+        setTestResult({
+          success: true,
+          message: `Connected! Account: "${data.account_name}" (${data.currency}) | Status: ${data.status}`
+        });
+      } else {
+        setTestResult({
+          success: false,
+          message: data?.error || 'Failed to verify connection.'
+        });
+      }
+    } catch (err: any) {
+      setTestResult({ success: false, message: err.message || 'Error testing connection.' });
+    } finally {
+      setTesting(false);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -170,10 +207,52 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onSave }) => {
             />
           </div>
 
-          <div style={{ fontSize: '12px', color: '#10b981', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <ShieldCheck style={{ width: '14px', height: '14px' }} />
-            <span>Tokens are securely stored & used server-side in Supabase Edge Functions</span>
+           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginTop: '8px' }}>
+            <div style={{ fontSize: '12px', color: '#10b981', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <ShieldCheck style={{ width: '14px', height: '14px' }} />
+              <span>Tokens are securely stored & used server-side in Supabase Edge Functions</span>
+            </div>
+            
+            <button
+              type="button"
+              onClick={handleTestConnection}
+              disabled={testing}
+              style={{
+                backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                color: '#10b981',
+                border: '1px solid rgba(16, 185, 129, 0.3)',
+                padding: '8px 16px',
+                borderRadius: '8px',
+                fontSize: '13px',
+                fontWeight: 600,
+                cursor: testing ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                transition: 'all 0.2s'
+              }}
+              onMouseOver={(e) => { if (!testing) e.currentTarget.style.backgroundColor = 'rgba(16, 185, 129, 0.2)'; }}
+              onMouseOut={(e) => { if (!testing) e.currentTarget.style.backgroundColor = 'rgba(16, 185, 129, 0.1)'; }}
+            >
+              {testing && <Loader2 className="animate-spin" style={{ width: '14px', height: '14px' }} />}
+              <span>{testing ? 'Testing...' : 'Test Connection'}</span>
+            </button>
           </div>
+
+          {testResult && (
+            <div style={{
+              padding: '12px 16px',
+              borderRadius: '8px',
+              fontSize: '13px',
+              border: `1px solid ${testResult.success ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+              backgroundColor: testResult.success ? 'rgba(16, 185, 129, 0.05)' : 'rgba(239, 68, 68, 0.05)',
+              color: testResult.success ? '#34d399' : '#f87171',
+              marginTop: '4px',
+              lineHeight: '1.4'
+            }}>
+              {testResult.message}
+            </div>
+          )}
         </div>
 
         <button
