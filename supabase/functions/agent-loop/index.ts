@@ -452,7 +452,7 @@ async function executeTool(
 
       const metaData = await res.json()
       if (!res.ok) {
-        return JSON.stringify({ error: `Meta API Error: ${metaData.error?.message || 'Unknown error'}` })
+        return JSON.stringify({ error: `Meta API Error: ${JSON.stringify(metaData.error || metaData)}` })
       }
 
       const metaCampaignId = metaData.id
@@ -529,7 +529,7 @@ async function executeTool(
 
       const metaData = await res.json()
       if (!res.ok) {
-        return JSON.stringify({ error: `Meta API Error: ${metaData.error?.message || 'Unknown error'}` })
+        return JSON.stringify({ error: `Meta API Error: ${JSON.stringify(metaData.error || metaData)}` })
       }
 
       const metaAdSetId = metaData.id
@@ -607,7 +607,7 @@ async function executeTool(
 
       const creativeData = await creativeRes.json()
       if (!creativeRes.ok) {
-        return JSON.stringify({ error: `Meta Ad Creative Error: ${creativeData.error?.message || 'Unknown error'}` })
+        return JSON.stringify({ error: `Meta Ad Creative Error: ${JSON.stringify(creativeData.error || creativeData)}` })
       }
 
       const creativeId = creativeData.id
@@ -628,7 +628,7 @@ async function executeTool(
 
       const adData = await adRes.json()
       if (!adRes.ok) {
-        return JSON.stringify({ error: `Meta Ad Error: ${adData.error?.message || 'Unknown error'}` })
+        return JSON.stringify({ error: `Meta Ad Error: ${JSON.stringify(adData.error || adData)}` })
       }
 
       const metaAdId = adData.id
