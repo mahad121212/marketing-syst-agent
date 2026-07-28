@@ -335,8 +335,30 @@ serve(async (req) => {
       })
 
       // Fetch user settings
-      const { data: settings } = await supabaseClient.from('user_settings').select('openrouter_key, preferred_model').eq('id', goal.user_id).single()
+      const { data: settings } = await supabaseClient.from('user_settings').select('openrouter_key, preferred_model, meta_access_token, meta_ad_account_id').eq('id', goal.user_id).single()
       if (!settings?.openrouter_key) continue;
+
+      // Trigger live Meta sync on-demand before starting reasoning
+      if (settings.meta_access_token && settings.meta_ad_account_id) {
+        try {
+          console.log('Triggering live Meta data sync in background...')
+          const syncRes = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/meta-data-sync`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ user_id: goal.user_id })
+          })
+          if (!syncRes.ok) {
+            console.error('Background Meta sync failed:', await syncRes.text())
+          } else {
+            console.log('Background Meta sync completed successfully.')
+          }
+        } catch (syncErr: any) {
+          console.error('Error during background Meta sync:', syncErr.message)
+        }
+      }
 
       const { data: businessProfile } = await supabaseClient.from('business_profiles').select('*').eq('user_id', goal.user_id).single()
 

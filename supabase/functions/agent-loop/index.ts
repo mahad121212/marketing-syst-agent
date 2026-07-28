@@ -479,9 +479,29 @@ serve(async (req) => {
     if (!prompt) throw new Error('Prompt is required')
     if (!session_id) throw new Error('session_id is required')
 
-    // Fetch API Key
-    const { data: settings } = await supabaseClient.from('user_settings').select('openrouter_key, preferred_model').eq('id', user.id).single()
+    // Fetch API Key and Meta credentials
+    const { data: settings } = await supabaseClient.from('user_settings').select('openrouter_key, preferred_model, meta_access_token, meta_ad_account_id').eq('id', user.id).single()
     if (!settings?.openrouter_key) throw new Error('OpenRouter API Key not found. Please save it in Settings.')
+
+    // Trigger live Meta sync on-demand before starting reasoning
+    if (settings.meta_access_token && settings.meta_ad_account_id) {
+      try {
+        console.log('Triggering live Meta data sync on-demand...')
+        const syncRes = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/meta-data-sync`, {
+          method: 'POST',
+          headers: {
+            'Authorization': req.headers.get('Authorization')!
+          }
+        })
+        if (!syncRes.ok) {
+          console.error('On-demand Meta sync failed:', await syncRes.text())
+        } else {
+          console.log('On-demand Meta sync completed successfully.')
+        }
+      } catch (syncErr: any) {
+        console.error('Error during on-demand Meta sync:', syncErr.message)
+      }
+    }
 
     // Fetch Business Profile for Context
     const { data: businessProfile } = await supabaseClient.from('business_profiles').select('*').eq('user_id', user.id).single()
