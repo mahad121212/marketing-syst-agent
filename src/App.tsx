@@ -20,6 +20,7 @@ export const App: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [chatSessions, setChatSessions] = useState<{ id: string; title: string; updated_at: string }[]>([]);
+  const [reasoningMode, setReasoningMode] = useState<'fast' | 'deep'>('fast');
 
   // Initial Mock Campaigns
   const [campaigns, setCampaigns] = useState<Campaign[]>([
@@ -233,7 +234,7 @@ export const App: React.FC = () => {
 
     try {
       const { data, error } = await supabase.functions.invoke('agent-loop', {
-        body: { prompt: text, session_id: currentSessionId }
+        body: { prompt: text, session_id: currentSessionId, reasoning_mode: reasoningMode }
       });
 
       if (error) throw error;
@@ -411,6 +412,8 @@ export const App: React.FC = () => {
               onNewChat={handleNewChat}
               onSwitchSession={handleSwitchSession}
               onDeleteSession={handleDeleteSession}
+              reasoningMode={reasoningMode}
+              setReasoningMode={setReasoningMode}
             />
           )}
           {activeTab === 'campaigns' && (

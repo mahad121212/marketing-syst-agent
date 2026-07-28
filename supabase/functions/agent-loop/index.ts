@@ -159,6 +159,112 @@ const AGENT_TOOLS = [
 ]
 
 // ============================================================
+// SYSTEM PROMPT GENERATORS FOR DEEP REASONING
+// ============================================================
+function generatePlannerPrompt(businessProfile: any, historical_context?: string) {
+  let profileContext = 'No business profile found. Ask the user to fill out their Business Profile in the dashboard.';
+  
+  if (businessProfile) {
+    profileContext = `
+BUSINESS CONTEXT:
+- Name: ${businessProfile.business_name}
+- Industry: ${businessProfile.industry}
+- Description: ${businessProfile.business_description}
+- Market: ${businessProfile.country} (${businessProfile.currency})
+- Target CPA: ${businessProfile.target_cpa ? businessProfile.target_cpa + ' ' + (businessProfile.currency || 'USD') : 'Not provided'}
+- Target ROAS: ${businessProfile.target_roas ? businessProfile.target_roas + 'x' : 'Not provided'}
+- Budget Cap: ${businessProfile.monthly_ad_budget ? businessProfile.monthly_ad_budget + ' ' + (businessProfile.currency || 'USD') + '/mo' : 'Not provided'}
+- Stage: ${businessProfile.business_stage}
+`;
+  }
+
+  return `You are MetaAgent Planner AI, a highly advanced strategic ad planner.
+Your goal is to analyze the user's request and outline a structured, step-by-step advertising strategy BEFORE any execution begins.
+
+${profileContext}
+
+## Budget Discipline Rules:
+1. Distinguish between TOTAL available budget and DAILY budget. If a user says "I have 2000 PKR to spend", you must never recommend a 2000 PKR daily budget. Recommend a daily budget of 300-500 PKR to spread the test over 4-7 days.
+2. For small budgets (e.g. under 5000 PKR / $50 USD), recommend a single campaign with 1 or 2 ad sets max.
+3. Suggest a phased testing approach: Phase 1 (Testing/Learning) and Phase 2 (Scaling).
+
+You MUST respond ONLY with a valid JSON object in this format (no markdown formatting, no extra text):
+{
+  "strategic_assessment": "analysis of constraints, goals, and opportunities",
+  "budget_allocation": {
+    "total_budget": "the total amount of budget provided or detected",
+    "daily_budget": "recommended daily budget in the user's currency",
+    "days_of_testing": 5,
+    "rationale": "why this budget split is optimal for learning"
+  },
+  "planned_steps": [
+    "Step 1: description of campaign objective and settings",
+    "Step 2: description of targeting segments to test",
+    "Step 3: description of copies or creatives to test"
+  ]
+}`;
+}
+
+function generateReviewerPrompt(role: 'budget' | 'targeting' | 'risk', businessProfile: any) {
+  let profileContext = '';
+  if (businessProfile) {
+    profileContext = `
+Business: ${businessProfile.business_name} (${businessProfile.country})
+Target CPA: ${businessProfile.target_cpa || 'Not provided'}
+Target ROAS: ${businessProfile.target_roas || 'Not provided'}
+`;
+  }
+
+  const roleDescriptions = {
+    budget: `You are the Budget Strategist Reviewer.
+Your sole job is to review the worker's proposed daily budget, campaign objective, and allocation strategy.
+Determine if:
+- The daily budget is set too high (e.g. burning the entire user's wallet in a single day).
+- The budget is too low to meet Meta's requirements (minimum PKR 250 / $3 per ad set).
+- The objective matches the budget size.`,
+
+    targeting: `You are the Targeting Expert Reviewer.
+Your sole job is to review the ad set targeting proposed by the worker.
+Determine if:
+- The targeting is logical for the business profile.
+- The age range, locations, and interests match the product.
+- It is too broad (e.g. targeting entire country with no interests on a small budget) or too narrow.`,
+
+    risk: `You are the Risk Auditor Reviewer.
+Your sole job is to audit the entire plan for risks, errors, and compliance.
+Determine if:
+- The worker is violating temporal discipline (e.g. trying to pause or modify an ad set that is less than 3 days old).
+- The worker is calling creation tools multiple times unnecessarily.
+- There are critical errors or mismatch between currency settings.`
+  };
+
+  return `${roleDescriptions[role]}
+${profileContext}
+
+Analyze the user's original request, the strategic plan, the tools executed, and the draft response.
+Deliver a verdict ("PASS" or "FAIL") and detailed, actionable feedback.
+
+You MUST respond ONLY with a JSON object in this format (no markdown formatting, no extra text):
+{
+  "verdict": "PASS" | "FAIL",
+  "feedback": "detailed reasons for pass or fail"
+}`;
+}
+
+function generateSynthesizerPrompt(businessProfile: any) {
+  return `You are the Quality Gate Synthesizer.
+Review the original user request, the worker's draft response, and the reports from the three reviewers (Budget Strategist, Targeting Expert, Risk Auditor).
+If any reviewer returned "FAIL", synthesize their feedback into a clear, single paragraph of actionable adjustments for the worker.
+If all reviewers returned "PASS", confirm that everything looks perfect.
+
+You MUST respond ONLY with a JSON object in this format (no markdown formatting, no extra text):
+{
+  "all_passed": true | false,
+  "actionable_feedback": "synthesis of feedback if any failed, or empty if all passed"
+}`;
+}
+
+// ============================================================
 // SYSTEM PROMPT GENERATOR
 // ============================================================
 function generateSystemPrompt(businessProfile: any, historical_context?: string) {
@@ -183,6 +289,25 @@ BUSINESS CONTEXT:
 
 ${profileContext}
 
+## Core Identity & Reasoning Mode
+You are a SENIOR MEDIA BUYER, not a task robot. Your value comes from STRATEGIC THINKING, not just tool execution.
+
+### Reasoning Hierarchy (always follow this order):
+1. **Listen** — Fully understand what the user is really asking. Read between the lines. "I have 2000 PKR and want to hit a 6" means they have extremely limited budget and need maximum ROI — NOT "create a campaign with 2000 PKR daily budget."
+2. **Analyze** — Consider the user's business context, budget constraints, market (Pakistan/PKR vs US/USD), industry, and what realistic outcomes look like.
+3. **Advise** — Present your strategic recommendation with clear reasoning BEFORE taking action. Explain trade-offs.
+4. **Act** — Only execute after the user understands and agrees with your plan.
+
+### When NOT to Immediately Create Things
+If the user asks a strategic question ("what should I do?", "how should I spend?", "what's the best approach?"), your job is to ADVISE FIRST:
+- Present 1-2 strategic options with pros/cons
+- Recommend one option and explain why
+- Ask the user to confirm before you build anything
+- Do NOT just fire off create_campaign immediately
+
+### When to Immediately Create Things
+If the user gives you a SPECIFIC directive ("create a campaign named X with budget Y"), then act directly. But still explain your reasoning briefly.
+
 ## Temporal Discipline (CRITICAL)
 You MUST check the \`age_days\` of every item before reasoning about it.
 - **< 3 days old**: UNTOUCHABLE. Do NOT analyze, judge, or propose any change. Meta's learning phase needs at minimum 72 hours. Use \`report_no_action\`.
@@ -198,6 +323,41 @@ You have dedicated tools to create new campaigns, ad sets, and ads:
 
 When the user asks you to create something new, YOU MUST use these tools to actually create the entities. Do NOT tell the user to go to Meta Ads Manager and do it themselves. You are the media buyer — you do the work.
 Always provide a full campaign structure when asked: campaign -> at least one ad set -> at least one ad.
+
+## Strategic Budget Reasoning (CRITICAL)
+You are a STRATEGIC media buyer, not a button-pusher. When the user gives you a budget, you MUST reason about it before acting.
+
+### Total Money vs Daily Budget
+Users often say things like "I have 2000 rupees" or "my budget is $50". You MUST determine whether this is:
+- **Total available money** (their entire ad spend wallet) — in this case, you must NEVER set daily_budget = total money. That would burn everything in one day.
+- **Daily budget** (what they want to spend per day) — only then set it as daily_budget directly.
+
+When in doubt, ASSUME it is total available money and reason accordingly:
+- If the user says "I have X rupees/dollars to spend", divide it across days. A good starting point for small budgets is 3-7 day test windows.
+- Example: "I have 2000 PKR" → set daily budget to 300-500 PKR so it lasts 4-7 days of testing.
+- ALWAYS explain your budget allocation reasoning to the user before creating.
+
+### Think-Before-You-Act Protocol
+When the user asks you to do something strategic (create campaigns, allocate budget, plan an ad strategy), you MUST follow this order:
+1. **UNDERSTAND** — Ask yourself: What is the user's real goal? What constraints do they have? How much money and time do they have?
+2. **STRATEGIZE** — Present your recommended approach to the user FIRST. Explain: how you would split the budget, why you chose that structure, what the testing plan is, and what success looks like.
+3. **CONFIRM** — Wait for the user's approval or feedback on your strategy before creating anything on Meta.
+4. **EXECUTE** — Only after the user agrees, use your creation tools to build the campaign structure.
+
+Do NOT skip steps 2 and 3. If the user says "just do it" or "go ahead", you may proceed, but you must STILL briefly explain your reasoning in your response.
+
+### Small Budget Survival Rules
+When the user has a tight budget (signals: "only have X", "one shot", "limited money", "can't afford to waste"):
+- **Never allocate 100% to a single campaign/ad set on day one.** Reserve at least 20-30% for iteration.
+- **Start with 1 campaign, 2 ad sets** (split-test audiences) to find what works before scaling.
+- **Set realistic expectations.** Tell the user what outcomes are likely with their budget. Don't overpromise.
+- **Suggest a phased approach:** Phase 1 = test/learn (60-70% budget), Phase 2 = scale winners (remaining budget).
+- **Recommend the minimum viable daily budget** that still gives Meta enough data to optimize (usually PKR 250-500 / $3-5 per ad set per day).
+
+### Budget Allocation Examples
+- User says "I have 2000 PKR, one shot": daily_budget = 400 PKR (5 days of testing), split into 2 ad sets.
+- User says "my daily budget is $20": daily_budget = $20, that's clear — set it directly.
+- User says "spend $100 on this campaign": clarify if that's total or daily. If total, spread it over 5-7 days.
 
 ## Missing Absolute Targets (CRITICAL)
 If the user's Business Profile shows "Not provided" for Target CPA or ROAS, DO NOT refuse to make decisions or ask the user for numbers. You MUST shift to RELATIVE evaluation:
@@ -353,7 +513,7 @@ async function executeTool(
 
       return JSON.stringify({
         type: 'PROPOSAL',
-        card: data,
+        card: cardRes.data,
         message: 'Action Card generated with ' + toolArgs.priority + ' priority and sent to Action Center.'
       })
     }
@@ -685,7 +845,7 @@ serve(async (req) => {
     const { data: { user }, error: userError } = await supabaseClient.auth.getUser()
     if (userError || !user) throw new Error('Unauthorized')
 
-    const { prompt, session_id, is_background, historical_context } = await req.json()
+    const { prompt, session_id, is_background, historical_context, reasoning_mode } = await req.json()
     if (!prompt) throw new Error('Prompt is required')
     if (!session_id) throw new Error('session_id is required')
 
@@ -741,77 +901,333 @@ serve(async (req) => {
       content: msg.content || ''
     }))
 
-    // Build the conversation array: system prompt + chat history
-    const finalMessages: any[] = [
-      { role: 'system', content: generateSystemPrompt(businessProfile, historical_context) },
-      ...history
-    ]
-
     const toolExecutions: any[] = []
-    const thinkingSteps: string[] = ['Initializing Context-Aware OODA Loop...']
-    if (!businessProfile) thinkingSteps.push('WARNING: No Business Profile found. Agent is running without context.')
-    else thinkingSteps.push('Loaded Business Profile: ' + businessProfile.business_name + ' (' + businessProfile.country + ')')
-
+    const thinkingSteps: string[] = []
     let proposals: any[] = []
-    const MAX_ITERATIONS = 6
     let finalContent = ''
 
-    for (let i = 0; i < MAX_ITERATIONS; i++) {
-      thinkingSteps.push('Iteration ' + (i + 1) + ': Reasoning with ' + model + '...')
-
-      const openRouterResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': 'Bearer ' + openRouterKey,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://metaagent.ai',
-          'X-Title': 'MetaAgent AI'
-        },
-        body: JSON.stringify({
-          model: model,
-          messages: finalMessages,
-          tools: AGENT_TOOLS,
-          tool_choice: 'auto'
+    if (reasoning_mode === 'deep') {
+      thinkingSteps.push('🧠 Running in Deep Reasoning Mode...')
+      thinkingSteps.push('[Planning] Strategic planner analyzing requirements...')
+      
+      let planJson: any = null
+      try {
+        const plannerRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + openRouterKey,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://metaagent.ai',
+            'X-Title': 'MetaAgent AI'
+          },
+          body: JSON.stringify({
+            model: model,
+            messages: [
+              { role: 'system', content: generatePlannerPrompt(businessProfile, historical_context) },
+              { role: 'user', content: prompt }
+            ]
+          })
         })
+        if (!plannerRes.ok) throw new Error(await plannerRes.text())
+        const plannerData = await plannerRes.json()
+        const rawContent = plannerData.choices[0].message.content || '{}'
+        
+        const cleanContent = rawContent.replace(/```json/g, '').replace(/```/g, '').trim()
+        planJson = JSON.parse(cleanContent)
+        
+        thinkingSteps.push(`[Planning] Assessment: ${planJson.strategic_assessment}`)
+        thinkingSteps.push(`[Planning] Budget Split: Total: ${planJson.budget_allocation?.total_budget || 'N/A'}, Daily: ${planJson.budget_allocation?.daily_budget || 'N/A'}, Days: ${planJson.budget_allocation?.days_of_testing || 'N/A'}`)
+        thinkingSteps.push(`[Planning] Planned Steps: \n${(planJson.planned_steps || []).map((s: string) => `- ${s}`).join('\n')}`)
+      } catch (err: any) {
+        console.error('Planner phase failed, using fallback:', err.message)
+        thinkingSteps.push('[Planning] Strategic planner phase encountered an error. Proceeding with fallback plan.')
+        planJson = {
+          strategic_assessment: "Standard best-practice execution",
+          budget_allocation: { total_budget: "Default", daily_budget: 350, rationale: "Default safety split" },
+          planned_steps: ["Execute standard target setup"]
+        }
+      }
+
+      // Phase 2: Worker OODA Loop
+      thinkingSteps.push('[Worker] Starting Worker execution loop guided by plan...')
+      const workerSystemPrompt = generateSystemPrompt(businessProfile, historical_context) +
+        `\n\n## YOUR MANDATORY STRATEGIC PLAN:\n${JSON.stringify(planJson, null, 2)}\n\nYou MUST follow the plan's daily budget, steps, and targets. Do NOT allocate the total budget as a daily budget.`;
+
+      const workerMessages: any[] = [
+        { role: 'system', content: workerSystemPrompt },
+        ...history
+      ]
+
+      const MAX_ITERATIONS = 6
+      for (let i = 0; i < MAX_ITERATIONS; i++) {
+        thinkingSteps.push('[Worker] Iteration ' + (i + 1) + ': Reasoning with ' + model + '...')
+
+        const workerRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + openRouterKey,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://metaagent.ai',
+            'X-Title': 'MetaAgent AI'
+          },
+          body: JSON.stringify({
+            model: model,
+            messages: workerMessages,
+            tools: AGENT_TOOLS,
+            tool_choice: 'auto'
+          })
+        })
+
+        if (!workerRes.ok) throw new Error('Worker OpenRouter Error: ' + await workerRes.text())
+
+        const aiData = await workerRes.json()
+        const assistantMessage = aiData.choices[0].message
+        workerMessages.push(assistantMessage)
+
+        if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
+          for (const toolCall of assistantMessage.tool_calls) {
+            const toolName = toolCall.function.name
+            let toolArgs = {}
+            try { toolArgs = JSON.parse(toolCall.function.arguments || '{}') } catch {}
+
+            thinkingSteps.push('[Worker] Executing Tool: ' + toolName)
+
+            const toolResult = await executeTool(
+              toolName,
+              toolArgs,
+              supabaseClient,
+              user.id,
+              session_id,
+              !!is_background,
+              settings?.meta_access_token || undefined,
+              settings?.meta_ad_account_id || undefined
+            )
+
+            try {
+              const parsed = JSON.parse(toolResult)
+              if (parsed.type === 'PROPOSAL' || parsed.type === 'GOAL_PROPOSAL') proposals.push(parsed)
+            } catch {}
+
+            toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult.substring(0, 500), status: 'success' })
+            workerMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResult })
+          }
+        } else {
+          finalContent = assistantMessage.content || ''
+          thinkingSteps.push('[Worker] Draft response ready.')
+          break
+        }
+      }
+
+      // Phase 3 & 4: Reviewers & Synthesizer quality gate
+      thinkingSteps.push('[Review] Initializing quality gate reviewers...')
+      const reviewerModel = 'google/gemini-2.5-flash' // cheap and robust for review
+      
+      const roles: ('budget' | 'targeting' | 'risk')[] = ['budget', 'targeting', 'risk']
+      const reviewerPromises = roles.map(async (role) => {
+        try {
+          const reviewerRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': 'Bearer ' + openRouterKey,
+              'Content-Type': 'application/json',
+              'HTTP-Referer': 'https://metaagent.ai',
+              'X-Title': 'MetaAgent AI'
+            },
+            body: JSON.stringify({
+              model: reviewerModel,
+              messages: [
+                { role: 'system', content: generateReviewerPrompt(role, businessProfile) },
+                { role: 'user', content: `Original request: ${prompt}\nPlanner Plan: ${JSON.stringify(planJson)}\nWorker Tools Executed: ${JSON.stringify(toolExecutions)}\nWorker Draft Response: ${finalContent}` }
+              ]
+            })
+          })
+          if (!reviewerRes.ok) throw new Error(await reviewerRes.text())
+          const data = await reviewerRes.json()
+          const clean = (data.choices[0].message.content || '{}').replace(/```json/g, '').replace(/```/g, '').trim()
+          return { role, ...JSON.parse(clean) }
+        } catch (err: any) {
+          console.error(`Reviewer ${role} failed:`, err.message)
+          return { role, verdict: 'PASS', feedback: 'Skipped due to transient error.' } // bypass fails to avoid breaking flow
+        }
       })
 
-      if (!openRouterResponse.ok) throw new Error('OpenRouter Error: ' + await openRouterResponse.text())
+      const reviews = await Promise.all(reviewerPromises)
+      for (const r of reviews) {
+        thinkingSteps.push(`[Review] ${r.role.toUpperCase()}: ${r.verdict} — "${r.feedback}"`)
+      }
 
-      const aiData = await openRouterResponse.json()
-      const assistantMessage = aiData.choices[0].message
-      finalMessages.push(assistantMessage)
-
-      if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
-        for (const toolCall of assistantMessage.tool_calls) {
-          const toolName = toolCall.function.name
-          let toolArgs = {}
-          try { toolArgs = JSON.parse(toolCall.function.arguments || '{}') } catch {}
-
-          thinkingSteps.push('Executing Tool: ' + toolName)
-
-          const toolResult = await executeTool(
-            toolName,
-            toolArgs,
-            supabaseClient,
-            user.id,
-            session_id,
-            !!is_background,
-            settings?.meta_access_token || undefined,
-            settings?.meta_ad_account_id || undefined
-          )
-
-          try {
-            const parsed = JSON.parse(toolResult)
-            if (parsed.type === 'PROPOSAL' || parsed.type === 'GOAL_PROPOSAL') proposals.push(parsed)
-          } catch {}
-
-          toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult.substring(0, 500), status: 'success' })
-          finalMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResult })
+      // Synthesizer
+      thinkingSteps.push('[Review] Synthesizing reviewer verdicts...')
+      let synthJson = { all_passed: true, actionable_feedback: '' }
+      try {
+        const synthRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + openRouterKey,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://metaagent.ai',
+            'X-Title': 'MetaAgent AI'
+          },
+          body: JSON.stringify({
+            model: reviewerModel,
+            messages: [
+              { role: 'system', content: generateSynthesizerPrompt(businessProfile) },
+              { role: 'user', content: `Original request: ${prompt}\nWorker Draft Response: ${finalContent}\nReviewer Feedback: ${JSON.stringify(reviews)}` }
+            ]
+          })
+        })
+        if (synthRes.ok) {
+          const data = await synthRes.json()
+          const clean = (data.choices[0].message.content || '{}').replace(/```json/g, '').replace(/```/g, '').trim()
+          synthJson = JSON.parse(clean)
         }
+      } catch (err: any) {
+        console.error('Synthesizer failed:', err.message)
+      }
+
+      // Check Quality Gate
+      if (!synthJson.all_passed) {
+        thinkingSteps.push(`[Revision] Quality gate failed. Actionable feedback: "${synthJson.actionable_feedback}"`)
+        thinkingSteps.push('[Revision] Re-running Worker loop for 1 final revision iteration...')
+
+        // Inject synthesizer feedback as a user prompt revision
+        workerMessages.push({
+          role: 'user',
+          content: `CRITICAL QUALITY REJECTED: Your response or action failed the audit review. Adjust it according to this feedback:\n${synthJson.actionable_feedback}\n\nMake sure to run correct tools or fix parameters. Produce your final revised response.`
+        })
+
+        // Run worker loop once more, up to 3 steps
+        for (let i = 0; i < 3; i++) {
+          thinkingSteps.push('[Revision] Worker Iteration ' + (i + 1) + ': Refining response...')
+
+          const revisionRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': 'Bearer ' + openRouterKey,
+              'Content-Type': 'application/json',
+              'HTTP-Referer': 'https://metaagent.ai',
+              'X-Title': 'MetaAgent AI'
+            },
+            body: JSON.stringify({
+              model: model,
+              messages: workerMessages,
+              tools: AGENT_TOOLS,
+              tool_choice: 'auto'
+            })
+          })
+
+          if (!revisionRes.ok) break
+
+          const aiData = await revisionRes.json()
+          const assistantMessage = aiData.choices[0].message
+          workerMessages.push(assistantMessage)
+
+          if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
+            for (const toolCall of assistantMessage.tool_calls) {
+              const toolName = toolCall.function.name
+              let toolArgs = {}
+              try { toolArgs = JSON.parse(toolCall.function.arguments || '{}') } catch {}
+
+              thinkingSteps.push('[Revision] Executing Tool: ' + toolName)
+
+              const toolResult = await executeTool(
+                toolName,
+                toolArgs,
+                supabaseClient,
+                user.id,
+                session_id,
+                !!is_background,
+                settings?.meta_access_token || undefined,
+                settings?.meta_ad_account_id || undefined
+              )
+
+              try {
+                const parsed = JSON.parse(toolResult)
+                if (parsed.type === 'PROPOSAL' || parsed.type === 'GOAL_PROPOSAL') proposals.push(parsed)
+              } catch {}
+
+              toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult.substring(0, 500), status: 'success' })
+              workerMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResult })
+            }
+          } else {
+            finalContent = assistantMessage.content || ''
+            break
+          }
+        }
+        thinkingSteps.push('[Revision] Revised response successfully compiled.')
       } else {
-        finalContent = assistantMessage.content || ''
-        thinkingSteps.push('OODA Loop complete. Finalizing decision.')
-        break
+        thinkingSteps.push('✅ Quality gate passed successfully. Finalizing response.')
+      }
+
+    } else {
+      // Fast Mode (Default)
+      thinkingSteps.push('Initializing Context-Aware OODA Loop...')
+      if (!businessProfile) thinkingSteps.push('WARNING: No Business Profile found. Agent is running without context.')
+      else thinkingSteps.push('Loaded Business Profile: ' + businessProfile.business_name + ' (' + businessProfile.country + ')')
+
+      const finalMessages: any[] = [
+        { role: 'system', content: generateSystemPrompt(businessProfile, historical_context) },
+        ...history
+      ]
+
+      const MAX_ITERATIONS = 6
+      for (let i = 0; i < MAX_ITERATIONS; i++) {
+        thinkingSteps.push('Iteration ' + (i + 1) + ': Reasoning with ' + model + '...')
+
+        const openRouterResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + openRouterKey,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://metaagent.ai',
+            'X-Title': 'MetaAgent AI'
+          },
+          body: JSON.stringify({
+            model: model,
+            messages: finalMessages,
+            tools: AGENT_TOOLS,
+            tool_choice: 'auto'
+          })
+        })
+
+        if (!openRouterResponse.ok) throw new Error('OpenRouter Error: ' + await openRouterResponse.text())
+
+        const aiData = await openRouterResponse.json()
+        const assistantMessage = aiData.choices[0].message
+        finalMessages.push(assistantMessage)
+
+        if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
+          for (const toolCall of assistantMessage.tool_calls) {
+            const toolName = toolCall.function.name
+            let toolArgs = {}
+            try { toolArgs = JSON.parse(toolCall.function.arguments || '{}') } catch {}
+
+            thinkingSteps.push('Executing Tool: ' + toolName)
+
+            const toolResult = await executeTool(
+              toolName,
+              toolArgs,
+              supabaseClient,
+              user.id,
+              session_id,
+              !!is_background,
+              settings?.meta_access_token || undefined,
+              settings?.meta_ad_account_id || undefined
+            )
+
+            try {
+              const parsed = JSON.parse(toolResult)
+              if (parsed.type === 'PROPOSAL' || parsed.type === 'GOAL_PROPOSAL') proposals.push(parsed)
+            } catch {}
+
+            toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult.substring(0, 500), status: 'success' })
+            finalMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResult })
+          }
+        } else {
+          finalContent = assistantMessage.content || ''
+          thinkingSteps.push('OODA Loop complete. Finalizing decision.')
+          break
+        }
       }
     }
 

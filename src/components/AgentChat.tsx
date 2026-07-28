@@ -31,6 +31,8 @@ interface AgentChatProps {
   onNewChat: () => void;
   onSwitchSession: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
+  reasoningMode: 'fast' | 'deep';
+  setReasoningMode: React.Dispatch<React.SetStateAction<'fast' | 'deep'>>;
 }
 
 export const AgentChat: React.FC<AgentChatProps> = ({
@@ -43,6 +45,8 @@ export const AgentChat: React.FC<AgentChatProps> = ({
   onNewChat,
   onSwitchSession,
   onDeleteSession,
+  reasoningMode,
+  setReasoningMode,
 }) => {
   const [inputText, setInputText] = useState('');
   const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({});
@@ -602,6 +606,73 @@ export const AgentChat: React.FC<AgentChatProps> = ({
 
         {/* Input Area */}
         <form onSubmit={handleSend} style={{ padding: '20px 28px', backgroundColor: '#0c111d', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
+          {/* Mode Switcher */}
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '12px' }}>
+            <span style={{ fontSize: '11px', fontWeight: 600, color: 'rgba(255, 255, 255, 0.4)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Reasoning Mode:</span>
+            <div style={{ display: 'flex', backgroundColor: '#111827', padding: '3px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
+              <button
+                type="button"
+                onClick={() => setReasoningMode('fast')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '5px 12px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  backgroundColor: reasoningMode === 'fast' ? 'rgba(6, 182, 212, 0.15)' : 'transparent',
+                  color: reasoningMode === 'fast' ? '#38bdf8' : 'rgba(255, 255, 255, 0.4)',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                }}
+              >
+                <Sparkles style={{ width: '12px', height: '12px', opacity: reasoningMode === 'fast' ? 1 : 0.6 }} />
+                <span>Fast</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setReasoningMode('deep')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '5px 12px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  backgroundColor: reasoningMode === 'deep' ? 'rgba(139, 92, 246, 0.15)' : 'transparent',
+                  color: reasoningMode === 'deep' ? '#a78bfa' : 'rgba(255, 255, 255, 0.4)',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                }}
+              >
+                <Bot style={{ width: '12px', height: '12px', opacity: reasoningMode === 'deep' ? 1 : 0.6 }} />
+                <span>Deep Reasoning</span>
+              </button>
+            </div>
+            
+            {reasoningMode === 'deep' && (
+              <span style={{
+                fontSize: '11px',
+                color: '#f59e0b',
+                backgroundColor: 'rgba(245, 158, 11, 0.08)',
+                border: '1px solid rgba(245, 158, 11, 0.2)',
+                padding: '3px 8px',
+                borderRadius: '6px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                marginLeft: '8px',
+              }}>
+                <AlertCircle style={{ width: '11px', height: '11px' }} />
+                Requires ~3x more tokens (Planner & Reviewers feedback loop enabled)
+              </span>
+            )}
+          </div>
+
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
             <input
               type="text"
