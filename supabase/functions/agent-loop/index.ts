@@ -807,7 +807,7 @@ function getLLMRequestDetails(key: string, requestedModel: string) {
   const k = key.trim()
   if (isGeminiKey(k)) {
     let mappedModel = requestedModel.replace('google/', '').trim();
-    if (!mappedModel.includes('gemini')) {
+    if (!mappedModel.includes('gemini') && !mappedModel.includes('gemma')) {
       mappedModel = 'gemini-3.6-flash';
     }
     return {
