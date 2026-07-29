@@ -811,7 +811,7 @@ function getLLMRequestDetails(key: string, requestedModel: string) {
       mappedModel = 'gemini-2.5-pro'
     }
     return {
-      url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+      url: `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`,
       headers: {
         'Authorization': `Bearer ${k}`,
         'Content-Type': 'application/json'
