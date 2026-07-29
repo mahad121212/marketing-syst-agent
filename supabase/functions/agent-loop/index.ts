@@ -806,9 +806,9 @@ function isGeminiKey(key: string): boolean {
 function getLLMRequestDetails(key: string, requestedModel: string) {
   const k = key.trim()
   if (isGeminiKey(k)) {
-    let mappedModel = 'gemini-2.5-flash'
-    if (requestedModel.toLowerCase().includes('pro')) {
-      mappedModel = 'gemini-2.5-pro'
+    let mappedModel = requestedModel.replace('google/', '').trim();
+    if (!mappedModel.includes('gemini')) {
+      mappedModel = 'gemini-3.6-flash';
     }
     return {
       url: `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`,
