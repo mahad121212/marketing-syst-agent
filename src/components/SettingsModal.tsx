@@ -148,7 +148,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onSave }) => {
                 fontSize: '14px',
                 boxSizing: 'border-box',
                 cursor: 'pointer'
-              }}
+              }}>
               <optgroup label="OpenRouter Models">
                 <option value="moonshotai/kimi-k3">Moonshot: Kimi K3</option>
                 <option value="anthropic/claude-opus-5">Anthropic: Claude Opus 5</option>
