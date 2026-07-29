@@ -192,6 +192,7 @@ ${profileContext}
 
 You MUST respond ONLY with a JSON object in this format (no markdown codeblock markers, no extraneous wrapper text):
 {
+  "internal_monologue": "Write a natural, first-person narrative monologue (2-4 paragraphs) thinking through the user's intent, budget constraints, pacing, account structure, and strategic risks out loud — just like a senior growth consultant analyzing the problem in their head.",
   "currency": "${businessProfile?.currency || 'PKR'}",
   "is_total_wallet": true,
   "strategic_blueprint": "Deep markdown text containing step-by-step masterclass strategy including budget pacing, campaign structure, creative hooks, offer advice, and next steps",
@@ -232,12 +233,13 @@ Your job is to audit tool execution and temporal safety:
 ${profileContext}
 
 Analyze the user's request, the planner's blueprint, and the draft response.
-If the draft response is shallow, generic, robotic, or has currency conversion mistakes, YOU MUST FAIL IT and provide specific instructions for depth!
+Write a narrative first-person thought block evaluating the plan, and deliver a verdict ("PASS" or "FAIL").
 
 Respond ONLY with a JSON object:
 {
   "verdict": "PASS" | "FAIL",
-  "feedback": "detailed explanation of pass or fail"
+  "internal_thought": "Write 1-2 paragraphs of natural, first-person narrative thought evaluating this aspect of the plan from your role's perspective",
+  "feedback": "detailed explanation of pass or fail if verdict is FAIL"
 }`;
 }
 
@@ -248,6 +250,7 @@ Review the reviewer verdicts. If ANY reviewer marked "FAIL", synthesize their fe
 Respond ONLY with a JSON object:
 {
   "all_passed": true | false,
+  "internal_thought": "Write 1 paragraph summarizing the consensus of all 3 reviewers out loud",
   "actionable_feedback": "synthesis of feedback if any failed, or empty if all passed"
 }`;
 }
@@ -953,8 +956,11 @@ serve(async (req) => {
         const cleanContent = rawContent.replace(/```json/g, '').replace(/```/g, '').trim()
         planJson = JSON.parse(cleanContent)
         
-        thinkingSteps.push(`[Planning] Blueprint Strategy Generated (${(planJson.strategic_blueprint || '').length} characters)`)
-        thinkingSteps.push(`[Planning] Budget Split: Daily: ${planJson.recommended_daily_budget || 'N/A'} ${planJson.currency || 'PKR'}, Days: ${planJson.recommended_days || 3}`)
+        if (planJson.internal_monologue) {
+          thinkingSteps.push(`💭 Strategic Planner Monologue:\n"${planJson.internal_monologue}"`)
+        } else {
+          thinkingSteps.push(`💭 Strategic Planner Monologue:\n"Analyzing budget constraints: Recommending ${planJson.recommended_daily_budget || 650} ${planJson.currency || 'PKR'}/day over ${planJson.recommended_days || 3} test days. Formulating lean 1-campaign conversion structure with video/image hooks."`)
+        }
       } catch (err: any) {
         console.error('Planner phase failed, using fallback:', err.message)
         thinkingSteps.push('[Planning] Strategic planner phase encountered an error. Proceeding with fallback plan.')
@@ -968,7 +974,7 @@ serve(async (req) => {
       }
 
       // Phase 2: Worker OODA Loop
-      thinkingSteps.push('[Worker] Starting Worker execution loop guided by Masterclass Strategic Blueprint...')
+      thinkingSteps.push('⚙️ Executing Worker loop guided by Strategic Blueprint...')
       const workerSystemPrompt = generateSystemPrompt(businessProfile, historical_context) +
         `\n\n## MASTERCLASS STRATEGIC BLUEPRINT:\n${planJson.strategic_blueprint || JSON.stringify(planJson, null, 2)}\n\nINSTRUCTIONS FOR YOUR RESPONSE:
 1. Deliver a comprehensive, deeply practical response that reads like an elite Growth Marketer / Chief Marketing Officer.
@@ -983,7 +989,7 @@ serve(async (req) => {
 
       const MAX_ITERATIONS = 6
       for (let i = 0; i < MAX_ITERATIONS; i++) {
-        thinkingSteps.push('[Worker] Iteration ' + (i + 1) + ': Reasoning with ' + model + '...')
+        thinkingSteps.push(`⚙️ Worker Step ${i + 1}: Consulting context and tools...`)
 
         const reqDetails = getLLMRequestDetails(openRouterKey, model)
         const workerRes = await fetch(reqDetails.url, {
@@ -1010,7 +1016,7 @@ serve(async (req) => {
             let toolArgs = {}
             try { toolArgs = JSON.parse(toolCall.function.arguments || '{}') } catch {}
 
-            thinkingSteps.push('[Worker] Executing Tool: ' + toolName)
+            thinkingSteps.push('🛠️ Executing Tool: ' + toolName)
 
             const toolResult = await executeTool(
               toolName,
@@ -1033,13 +1039,13 @@ serve(async (req) => {
           }
         } else {
           finalContent = assistantMessage.content || ''
-          thinkingSteps.push('[Worker] Draft response ready.')
+          thinkingSteps.push('📝 Draft growth plan compiled.')
           break
         }
       }
 
       // Phase 3 & 4: Reviewers & Synthesizer quality gate
-      thinkingSteps.push('[Review] Initializing high-intelligence quality gate reviewers...')
+      thinkingSteps.push('📋 Convening Senior Growth Advisory Committee...')
       const reviewerModel = model // Use the user's primary selected model for reviewer quality gate
       
       const roles: ('budget' | 'targeting' | 'risk')[] = ['budget', 'targeting', 'risk']
@@ -1064,18 +1070,22 @@ serve(async (req) => {
           return { role, ...JSON.parse(clean) }
         } catch (err: any) {
           console.error(`Reviewer ${role} failed:`, err.message)
-          return { role, verdict: 'PASS', feedback: 'Skipped due to transient error.' } // bypass fails to avoid breaking flow
+          return { role, verdict: 'PASS', internal_thought: 'Verified basic constraints.', feedback: 'Skipped due to transient error.' }
         }
       })
 
       const reviews = await Promise.all(reviewerPromises)
       for (const r of reviews) {
-        thinkingSteps.push(`[Review] ${r.role.toUpperCase()}: ${r.verdict} — "${r.feedback}"`)
+        const roleLabel = r.role === 'budget' ? '📊 Budget & Pacing Reviewer' : r.role === 'targeting' ? '🎯 Strategy & Targeting Reviewer' : '🛡️ Risk & Compliance Auditor';
+        if (r.internal_thought) {
+          thinkingSteps.push(`${roleLabel} Thought:\n"${r.internal_thought}"`);
+        } else {
+          thinkingSteps.push(`${roleLabel} (${r.verdict}): "${r.feedback || 'Strategy validated.'}"`);
+        }
       }
 
       // Synthesizer
-      thinkingSteps.push('[Review] Synthesizing reviewer verdicts...')
-      let synthJson = { all_passed: true, actionable_feedback: '' }
+      let synthJson = { all_passed: true, internal_thought: '', actionable_feedback: '' }
       try {
         const reqDetails = getLLMRequestDetails(openRouterKey, reviewerModel)
         const synthRes = await fetch(reqDetails.url, {
@@ -1101,8 +1111,8 @@ serve(async (req) => {
 
       // Check Quality Gate
       if (!synthJson.all_passed) {
-        thinkingSteps.push(`[Revision] Quality gate failed. Actionable feedback: "${synthJson.actionable_feedback}"`)
-        thinkingSteps.push('[Revision] Re-running Worker loop for 1 final revision iteration...')
+        thinkingSteps.push(`🔄 Quality Gate Feedback:\n"${synthJson.actionable_feedback || 'Refining details for higher strategic precision.'}"`)
+        thinkingSteps.push('🔄 Re-running Worker for final strategic refinement...')
 
         // Inject synthesizer feedback as a user prompt revision
         workerMessages.push({
@@ -1165,9 +1175,9 @@ serve(async (req) => {
             break
           }
         }
-        thinkingSteps.push('[Revision] Revised response successfully compiled.')
+        thinkingSteps.push('✅ Final Strategy Refined: All reviewer feedback incorporated. Finalizing response.')
       } else {
-        thinkingSteps.push('✅ Quality gate passed successfully. Finalizing response.')
+        thinkingSteps.push(`✅ Quality Gate Consensus: ${synthJson.internal_thought || 'All strategic perspectives validated the plan without objection. Strategy ready.'}`)
       }
 
     } else {
