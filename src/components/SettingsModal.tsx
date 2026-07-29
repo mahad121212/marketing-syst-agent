@@ -154,12 +154,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onSave }) => {
                 <option value="anthropic/claude-opus-5">Anthropic: Claude Opus 5</option>
                 <option value="openai/gpt-5.6-terra">OpenAI: GPT-5.6 Terra</option>
                 <option value="openai/gpt-4o-mini">OpenAI: GPT-4o Mini (Fast/Efficient)</option>
+                <option value="google/gemma-4-31b-it">Google: Gemma 4 31B IT</option>
               </optgroup>
               <optgroup label="Google Native Models">
                 <option value="google/gemini-3.6-flash">Google: Gemini 3.6 Flash (Recommended)</option>
                 <option value="google/gemini-3.1-flash-lite">Google: Gemini 3.1 Flash Lite</option>
                 <option value="google/gemini-3.5-flash-lite">Google: Gemini 3.5 Flash Lite</option>
-                <option value="google/gemma-4-31b">Google: Gemma 4 31B</option>
               </optgroup>
             </select>
           </div>
