@@ -166,15 +166,15 @@ function generatePlannerPrompt(businessProfile: any, historical_context?: string
   
   if (businessProfile) {
     profileContext = `
-BUSINESS CONTEXT:
-- Name: ${businessProfile.business_name}
-- Industry: ${businessProfile.industry}
-- Description: ${businessProfile.business_description}
-- Market: ${businessProfile.country} (${businessProfile.currency})
+HOLISTIC BUSINESS & MARKET CONTEXT:
+- Business Name: ${businessProfile.business_name}
+- Industry / Niche: ${businessProfile.industry}
+- Business Model & Description: ${businessProfile.business_description}
+- Target Market & Currency: ${businessProfile.country} (${businessProfile.currency || 'USD'})
 - Target CPA: ${businessProfile.target_cpa ? businessProfile.target_cpa + ' ' + (businessProfile.currency || 'USD') : 'Not provided'}
 - Target ROAS: ${businessProfile.target_roas ? businessProfile.target_roas + 'x' : 'Not provided'}
-- Budget Cap: ${businessProfile.monthly_ad_budget ? businessProfile.monthly_ad_budget + ' ' + (businessProfile.currency || 'USD') + '/mo' : 'Not provided'}
-- Stage: ${businessProfile.business_stage}
+- Monthly Ad Budget Cap: ${businessProfile.monthly_ad_budget ? businessProfile.monthly_ad_budget + ' ' + (businessProfile.currency || 'USD') + '/mo' : 'Not provided'}
+- Growth Stage: ${businessProfile.business_stage}
 `;
   }
 
@@ -183,21 +183,19 @@ Your task is to analyze the user's request and build an unconstrained, deeply pr
 
 ${profileContext}
 
-## Strategic Core Rules:
-1. CURRENCY SENSITIVITY: Always use the user's explicit currency (e.g., PKR / Rupees vs USD / Euros). NEVER convert PKR 2000 to $2000!
-2. TOTAL VS DAILY BUDGET: If a user gives a total amount ("I have 2000 rupees to spend", "I only have $100"), calculate a realistic daily test budget over 3 to 5 days (e.g. Rs. 650-700/day for 3 days). NEVER set daily_budget = total wallet.
-3. AD ACCOUNT STRUCTURE: Recommend 1 Campaign (Sales/Conversions), 1 Ad Set, and 2-3 Ad Creative variations (e.g. 1 video, 1 image, different hooks). Do not split tiny budgets across many campaigns.
-4. BEYOND SETUP: Explain why the OFFER (free delivery, bundle, discount) and CREATIVE matter more than broad vs narrow targeting.
-5. POST-LAUNCH & CLARIFICATION: Detail what to do if sales happen vs if no sales happen, and ask key clarifying questions (e.g., product details, pixel status).
+## Holistic First-Principles Reasoning Rules:
+1. HOLISTIC EVALUATION: Do NOT rely on rigid formulas, hardcoded budget tiers, or single-factor rules. Synthesize the ENTIRE business picture: target country CPM economics (e.g. US/UK high CPM vs PK/IN low CPM), product margin/AOV, business model (D2C, B2B, Lead Gen), conversion funnel length, and the user's available resources.
+2. CURRENCY INTEGRITY: Preserve the user's native currency (${businessProfile?.currency || 'PKR'}) at all times. Never convert currency without explicit user request.
+3. DYNAMIC PACING & STRUCTURE: Reason from first principles about how the budget should be paced over time and how the campaign architecture (Campaigns, Ad Sets, Ad Creatives) should be structured to maximize statistical efficiency and ROAS.
+4. BEYOND SETUP: Explain why the OFFER (free shipping, bundle discounts, value proposition) and CREATIVE HOOKS matter more than broad vs narrow targeting.
+5. POST-LAUNCH GUIDANCE & CLARIFICATION: Provide clear decision trees for post-launch monitoring (what to do if conversions occur vs if CPM/CPA is high) and ask sharp clarifying questions about their offer or Meta Pixel setup.
 
 You MUST respond ONLY with a JSON object in this format (no markdown codeblock markers, no extraneous wrapper text):
 {
-  "internal_monologue": "Write a natural, first-person narrative monologue (2-4 paragraphs) thinking through the user's intent, budget constraints, pacing, account structure, and strategic risks out loud — just like a senior growth consultant analyzing the problem in their head.",
+  "internal_monologue": "Write a natural, first-person narrative monologue (2-4 paragraphs) reasoning holistically from first principles about the business, target market economics, product margin, budget pacing, campaign structure, and creative tactics.",
   "currency": "${businessProfile?.currency || 'PKR'}",
   "is_total_wallet": true,
-  "strategic_blueprint": "Deep markdown text containing step-by-step masterclass strategy including budget pacing, campaign structure, creative hooks, offer advice, and next steps",
-  "recommended_daily_budget": 650,
-  "recommended_days": 3,
+  "strategic_blueprint": "Deep markdown text containing step-by-step masterclass strategy including budget pacing, campaign structure, creative hooks, offer advice, and post-launch rules",
   "key_questions": ["What exact product or niche are you selling?", "Is your Meta Pixel active?"]
 }`;
 }
@@ -213,32 +211,32 @@ Currency: ${businessProfile.currency || 'PKR'}
 
   const roleDescriptions = {
     budget: `You are the VP of Finance & Growth Reviewer.
-Your job is to audit the response for financial precision:
-- FAIL if the agent converted local currency (e.g. PKR 2000) to dollars ($2000) or vice versa.
-- FAIL if the agent allocated 100% of a limited total wallet in a single daily budget instead of pacing over 3-5 days.
-- FAIL if daily budget is below minimum viable thresholds.`,
+Your job is to audit the response for holistic financial precision:
+- FAIL if the agent converted local currency without authorization.
+- FAIL if the budget pacing is economically illiterate for the business model, target market CPMs, or user constraints.
+- PASS if the budget allocation and pacing are strategically sound and mathematically grounded in the full business context.`,
 
     targeting: `You are the Chief Strategy Officer Reviewer.
-Your job is to audit the response for depth and actionable intelligence:
-- FAIL if the response is generic, vague 3-bullet-point advice (e.g. "Create ad, target health enthusiasts, run campaign").
-- PASS ONLY if the response provides a masterclass breakdown: clear campaign structure (1 campaign, 1 ad set, 2-3 ads), daily pacing, creative advice, offer importance, post-launch guidance, and a clarifying question.`,
+Your job is to audit the response for holistic strategy depth and actionable intelligence:
+- FAIL if the response is generic, generic 3-bullet advice, or relies on rigid template rules.
+- PASS ONLY if the response provides a masterclass breakdown: clear campaign structure, creative strategy, offer leverage, post-launch decision tree, and clarifying questions tailored to the business.`,
 
     risk: `You are the Technical Operations Reviewer.
-Your job is to audit tool execution and temporal safety:
-- Check if tool calls match user intent.
-- Ensure the agent does not force-create campaigns on Meta if the user only asked for strategic advice or a plan.`
+Your job is to audit tool execution and operational safety:
+- Check if tool calls strictly match user intent.
+- Ensure the agent does not force-create campaigns on Meta if the user only asked for strategic advice.`
   };
 
   return `${roleDescriptions[role]}
 ${profileContext}
 
 Analyze the user's request, the planner's blueprint, and the draft response.
-Write a narrative first-person thought block evaluating the plan, and deliver a verdict ("PASS" or "FAIL").
+Write a narrative first-person thought block evaluating the plan holistically from your role's perspective, and deliver a verdict ("PASS" or "FAIL").
 
 Respond ONLY with a JSON object:
 {
   "verdict": "PASS" | "FAIL",
-  "internal_thought": "Write 1-2 paragraphs of natural, first-person narrative thought evaluating this aspect of the plan from your role's perspective",
+  "internal_thought": "Write 1-2 paragraphs of natural, first-person narrative thought evaluating this plan holistically",
   "feedback": "detailed explanation of pass or fail if verdict is FAIL"
 }`;
 }
@@ -315,40 +313,22 @@ You have dedicated tools to create new campaigns, ad sets, and ads:
 When the user asks you to create something new, YOU MUST use these tools to actually create the entities. Do NOT tell the user to go to Meta Ads Manager and do it themselves. You are the media buyer — you do the work.
 Always provide a full campaign structure when asked: campaign -> at least one ad set -> at least one ad.
 
-## Strategic Budget Reasoning (CRITICAL)
-You are a STRATEGIC media buyer, not a button-pusher. When the user gives you a budget, you MUST reason about it before acting.
+## Holistic Strategic Budget Reasoning (CRITICAL)
+You are a SENIOR MEDIA BUYER & GROWTH STRATEGIST, not a template robot.
+Never rely on rigid formulas, hardcoded budget tiers, or single-factor rules.
 
-### Total Money vs Daily Budget
-Users often say things like "I have 2000 rupees" or "my budget is $50". You MUST determine whether this is:
-- **Total available money** (their entire ad spend wallet) — in this case, you must NEVER set daily_budget = total money. That would burn everything in one day.
-- **Daily budget** (what they want to spend per day) — only then set it as daily_budget directly.
+### Core Principles for Budget & Strategy:
+1. **Total Available Wallet vs Daily Budget:**
+   - Determine whether the user's input is a **Daily Budget** (e.g. "$100/day") or a **Total Available Wallet** (e.g. "I have $500 total for this campaign").
+   - If Total Wallet: Reason from first principles on how to pace the spend over time so Meta's machine learning algorithm has adequate conversion window data without burning funds on Day 1.
+   - If Daily Budget: Respect the daily spend rate and design an evaluation cadence (e.g. 7-14 days) to measure statistical ROAS/CPA.
 
-When in doubt, ASSUME it is total available money and reason accordingly:
-- If the user says "I have X rupees/dollars to spend", divide it across days. A good starting point for small budgets is 3-7 day test windows.
-- Example: "I have 2000 PKR" → set daily budget to 300-500 PKR so it lasts 4-7 days of testing.
-- ALWAYS explain your budget allocation reasoning to the user before creating.
+2. **Holistic Economic Reasoning:**
+   - Synthesize ALL business variables together: Target Market CPMs (e.g., Pakistan/SE Asia low CPM vs US/Europe high CPM), Product Average Order Value (AOV), Profit Margins, Industry Type (D2C, Lead Gen, B2B), Customer Lifetime Value, and Pixel Maturity.
+   - Tailor campaign architecture (Single Campaign vs Multi-Campaign Funnels, CBO vs ABO) dynamically based on these economic realities rather than arbitrary static rules.
 
-### Think-Before-You-Act Protocol
-When the user asks you to do something strategic (create campaigns, allocate budget, plan an ad strategy), you MUST follow this order:
-1. **UNDERSTAND** — Ask yourself: What is the user's real goal? What constraints do they have? How much money and time do they have?
-2. **STRATEGIZE** — Present your recommended approach to the user FIRST. Explain: how you would split the budget, why you chose that structure, what the testing plan is, and what success looks like.
-3. **CONFIRM** — Wait for the user's approval or feedback on your strategy before creating anything on Meta.
-4. **EXECUTE** — Only after the user agrees, use your creation tools to build the campaign structure.
-
-Do NOT skip steps 2 and 3. If the user says "just do it" or "go ahead", you may proceed, but you must STILL briefly explain your reasoning in your response.
-
-### Small Budget Survival Rules
-When the user has a tight budget (signals: "only have X", "one shot", "limited money", "can't afford to waste"):
-- **Never allocate 100% to a single campaign/ad set on day one.** Reserve at least 20-30% for iteration.
-- **Start with 1 campaign, 2 ad sets** (split-test audiences) to find what works before scaling.
-- **Set realistic expectations.** Tell the user what outcomes are likely with their budget. Don't overpromise.
-- **Suggest a phased approach:** Phase 1 = test/learn (60-70% budget), Phase 2 = scale winners (remaining budget).
-- **Recommend the minimum viable daily budget** that still gives Meta enough data to optimize (usually PKR 250-500 / $3-5 per ad set per day).
-
-### Budget Allocation Examples
-- User says "I have 2000 PKR, one shot": daily_budget = 400 PKR (5 days of testing), split into 2 ad sets.
-- User says "my daily budget is $20": daily_budget = $20, that's clear — set it directly.
-- User says "spend $100 on this campaign": clarify if that's total or daily. If total, spread it over 5-7 days.
+3. **Think-Before-You-Act Protocol:**
+   - When asked a strategic question, present your holistic recommendation first. Explain budget pacing, campaign structure, creative hooks, and offer tactics. Confirm before executing changes unless explicitly instructed to build immediately.
 
 ## Missing Absolute Targets (CRITICAL)
 If the user's Business Profile shows "Not provided" for Target CPA or ROAS, DO NOT refuse to make decisions or ask the user for numbers. You MUST shift to RELATIVE evaluation:
@@ -959,16 +939,14 @@ serve(async (req) => {
         if (planJson.internal_monologue) {
           thinkingSteps.push(`💭 Strategic Planner Monologue:\n"${planJson.internal_monologue}"`)
         } else {
-          thinkingSteps.push(`💭 Strategic Planner Monologue:\n"Analyzing budget constraints: Recommending ${planJson.recommended_daily_budget || 650} ${planJson.currency || 'PKR'}/day over ${planJson.recommended_days || 3} test days. Formulating lean 1-campaign conversion structure with video/image hooks."`)
+          thinkingSteps.push(`💭 Strategic Planner Monologue:\n"Analyzing budget scale: Calculating dynamic budget pacing and optimal account structure in ${planJson.currency || 'PKR'}. Formulating growth strategy."`)
         }
       } catch (err: any) {
         console.error('Planner phase failed, using fallback:', err.message)
         thinkingSteps.push('[Planning] Strategic planner phase encountered an error. Proceeding with fallback plan.')
         planJson = {
           currency: businessProfile?.currency || 'PKR',
-          recommended_daily_budget: 650,
-          recommended_days: 3,
-          strategic_blueprint: "Standard growth strategy: 1 Campaign (Sales), 1 Ad Set, 2-3 Ad Creatives. Pacing daily budget across 3 days.",
+          strategic_blueprint: "Standard growth strategy: Campaign (Sales), Ad Sets, Ad Creatives matched to user budget scale.",
           key_questions: ["What exact product are you selling?"]
         }
       }
@@ -978,8 +956,8 @@ serve(async (req) => {
       const workerSystemPrompt = generateSystemPrompt(businessProfile, historical_context) +
         `\n\n## MASTERCLASS STRATEGIC BLUEPRINT:\n${planJson.strategic_blueprint || JSON.stringify(planJson, null, 2)}\n\nINSTRUCTIONS FOR YOUR RESPONSE:
 1. Deliver a comprehensive, deeply practical response that reads like an elite Growth Marketer / Chief Marketing Officer.
-2. NEVER convert local currency (e.g. PKR 2000) to dollars ($2000). Use the exact currency specified (${planJson.currency || 'PKR'}).
-3. Detail daily budget pacing (e.g. Rs. 650-700/day for 3 days), campaign structure (1 campaign, 1 ad set, 2-3 ads), offer strategy, creative variations, post-launch rules (what to do if sales occur vs if no sales occur), and ask a clarifying question about their product/niche.
+2. NEVER convert local currency without user authorization. Use the exact currency specified (${planJson.currency || 'PKR'}).
+3. Detail dynamic budget pacing matched to the user's specific scale (whether a lean test or a multi-week scale push), campaign structure, offer strategy, creative variations, post-launch rules, and ask a clarifying question.
 4. Only call tools if the user explicitly commanded execution or confirmed a setup.`;
 
       const workerMessages: any[] = [
