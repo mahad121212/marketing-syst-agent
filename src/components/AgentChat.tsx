@@ -1,7 +1,101 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, Sparkles, CheckCircle2, AlertCircle, Wrench, ChevronDown, ChevronRight, Play, Plus, MessageSquare, Trash2, Clock, Target, X, Calendar, Eye } from 'lucide-react';
 import { AgentMessage } from '../types';
 import { supabase } from '../lib/supabase';
+
+const LiveProcessLoader: React.FC<{ reasoningMode: 'fast' | 'deep' }> = ({ reasoningMode }) => {
+  const [currentStepIndex, setCurrentStepIndex] = useState(0);
+
+  const deepSteps = [
+    { title: '🗺️ Phase 1: Strategic Planner', desc: 'Analyzing business profile, market economics, and organizing roadmap subtasks...' },
+    { title: '⚙️ Phase 2: Worker OODA Loop', desc: 'Evaluating subtasks autonomously against live Meta Ads and temporal snapshot database...' },
+    { title: '📋 Phase 3: Strategic review', desc: 'CSO strategy reviewer validating ad set setup...' },
+    { title: '📋 Phase 4: Copywriting audit', desc: 'Lead copywriter reviewer assessing ad hooks and primary texts...' },
+    { title: '📋 Phase 5: Creative review', desc: 'Creative director reviewing overlay text descriptions...' },
+    { title: '📋 Phase 6: Diversity audit', desc: 'Creative diversity auditor checking format variance contextually...' },
+    { title: '📋 Phase 7: Compliance audit', desc: 'Compliance reviewer checking Meta policy rules & tool operations...' },
+    { title: '📋 Phase 8: Pacing & Finance review', desc: 'VP of Finance auditing daily budget spread and currency rules...' },
+    { title: '🔄 Phase 9: Quality Gate Synthesizer', desc: 'Synthesizing 6 reviewer audits into pass/fail directive...' },
+    { title: '📋 Phase 10: Plan Reviewer Critique', desc: 'Critiquing roadmap design and documenting execution lessons...' },
+    { title: '✍️ Phase 11: Formatter', desc: 'Formatting final strategy into a high-end, structured layout...' },
+    { title: '🚀 Finalizing output', desc: 'Rendering response output...' }
+  ];
+
+  const fastSteps = [
+    { title: '⚙️ Worker OODA Loop Initiating', desc: 'Loading campaign database snapshots...' },
+    { title: '⚙️ Iteration 1: Observe', desc: 'Retrieving account campaign hierarchy...' },
+    { title: '⚙️ Iteration 2: Orient', desc: 'Matching active objects against user rules...' },
+    { title: '⚙️ Iteration 3: Decide', desc: 'Formulating metric performance audit...' },
+    { title: '⚙️ Iteration 4: Act', desc: 'Finalizing response advice...' }
+  ];
+
+  const steps = reasoningMode === 'deep' ? deepSteps : fastSteps;
+
+  useEffect(() => {
+    setCurrentStepIndex(0);
+  }, [reasoningMode]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentStepIndex((prev) => (prev < steps.length - 1 ? prev + 1 : prev));
+    }, reasoningMode === 'deep' ? 3000 : 2000);
+    return () => clearInterval(interval);
+  }, [steps.length, reasoningMode]);
+
+  return (
+    <div style={{ display: 'flex', gap: '16px', alignSelf: 'flex-start', maxWidth: '85%', width: '100%' }}>
+      <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: 'linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 0 12px rgba(6, 182, 212, 0.3)' }}>
+        <Bot style={{ width: '20px', height: '20px', color: '#ffffff', animation: 'pulse 1.5s infinite' }} />
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
+        <div style={{
+          backgroundColor: '#111827',
+          border: '1px solid rgba(255, 255, 255, 0.08)',
+          borderRadius: '12px',
+          padding: '16px 20px',
+          color: '#f3f4f6',
+          fontSize: '14px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
+          maxWidth: '500px',
+          minWidth: '280px'
+        }}>
+          <style dangerouslySetInnerHTML={{__html: `
+            @keyframes spin-loader {
+              to { transform: rotate(360deg); }
+            }
+            @keyframes pulse {
+              0%, 100% { opacity: 1; }
+              50% { opacity: .5; }
+            }
+          `}} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ width: '16px', height: '16px', borderRadius: '50%', border: '2px solid rgba(6, 182, 212, 0.2)', borderTopColor: '#06b6d4', animation: 'spin-loader 1s linear infinite' }} />
+            <span style={{ fontSize: '13px', color: '#38bdf8', fontWeight: 600 }}>
+              {reasoningMode === 'deep' ? 'Deep Reasoning Pipeline Active (12 Stages)' : 'Fast Mode Agent active...'}
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', backgroundColor: 'rgba(255,255,255,0.02)', padding: '10px 12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.04)' }}>
+            <span style={{ fontSize: '12px', color: '#ffffff', fontWeight: 600 }}>{steps[currentStepIndex].title}</span>
+            <span style={{ fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{steps[currentStepIndex].desc}</span>
+          </div>
+
+          <div style={{ height: '4px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '2px', overflow: 'hidden' }}>
+            <div style={{
+              height: '100%',
+              backgroundColor: '#06b6d4',
+              width: `${((currentStepIndex + 1) / steps.length) * 100}%`,
+              transition: 'width 0.4s ease'
+            }} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 interface ChatSession {
   id: string;
@@ -52,6 +146,15 @@ export const AgentChat: React.FC<AgentChatProps> = ({
   const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({});
   const [showGoalLibrary, setShowGoalLibrary] = useState(false);
   const [goalSchedules, setGoalSchedules] = useState<GoalSchedule[]>([]);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isProcessing]);
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
@@ -486,6 +589,8 @@ export const AgentChat: React.FC<AgentChatProps> = ({
               </div>
             );
           })}
+          {isProcessing && <LiveProcessLoader reasoningMode={reasoningMode} />}
+          <div ref={messagesEndRef} />
         </div>
 
         {/* Goal Library Drawer (slides in from right) */}
