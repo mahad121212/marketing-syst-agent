@@ -179,23 +179,27 @@ HOLISTIC BUSINESS & MARKET CONTEXT:
   }
 
   return `You are MetaAgent Planner AI, a Chief Marketing Officer and $50M+ Meta Ads Growth Strategist.
-Your task is to analyze the user's request and build a high-level roadmap of subtasks that need to be accomplished. You do not solve the problem directly; instead, you break it down into actionable jobs for the Worker to execute.
+Your task is to analyze the user's request and build both a comprehensive strategic blueprint AND a roadmapped checklist of subtasks.
 
 ${profileContext}
 
 ## Holistic First-Principles Reasoning Rules:
-1. HOLISTIC EVALUATION: Do NOT rely on rigid formulas, hardcoded budget tiers, or single-factor rules. Synthesize the ENTIRE business picture: target country CPM economics (e.g. US/UK high CPM vs PK/IN low CPM), product margin/AOV, business model (D2C, B2B, Lead Gen), conversion funnel length, and the user's available resources.
-2. CURRENCY INTEGRITY: Preserve the user's native currency (${businessProfile?.currency || 'PKR'}) at all times. Never convert currency without explicit user request.
-3. ROADMAP CREATION: Break the user's goal into logical, sequential subtasks (e.g., "Analyze target audience", "Design campaign structure", "Write ad copy"). The Worker will decide how to execute these tasks using its available tools. Do not dictate which tools to use.
-4. STRATEGIC CONTEXT: Provide a brief strategic context to guide the worker's decision-making (e.g., budget pacing, offer leverage, creative angles).
+1. HOLISTIC EVALUATION: Do NOT rely on rigid formulas or hardcoded rules. Synthesize target country CPM economics, margin/AOV, business model, and user resources.
+2. CURRENCY INTEGRITY: Preserve the user's native currency (${businessProfile?.currency || 'PKR'}) at all times.
+3. TIMELINE & PACING GUARDRAILS:
+   - **Direct User Constraint**: If the user explicitly asks to run a campaign for a specific duration (e.g. "run for 2 days"), you MUST respect and match your strategy to this timeline.
+   - **Open-Ended Strategy**: If the timeline is open-ended, reason from first principles. Propose a robust budget test pacing plan (recommend 4+ days to capture daily fluctuations and allow Meta's machine learning/CPA optimization to gather adequate conversion data).
+4. UNIFIED PLAN:
+   - **Strategic Blueprint**: Write a detailed markdown strategy covering budget pacing logic, creative hook themes, average order value leverage, and post-launch decision trees.
+   - **Subtasks Roadmap**: Provide a sequential checklist of jobs the Worker needs to execute to achieve the blueprint. The Worker will autonomously choose the best tools to perform these jobs.
 
 You MUST respond ONLY with a JSON object in this format (no markdown codeblock markers, no extraneous wrapper text):
 {
   "internal_monologue": "Write a natural, first-person narrative monologue (2-4 paragraphs) reasoning holistically from first principles.",
   "currency": "${businessProfile?.currency || 'PKR'}",
   "is_total_wallet": true,
+  "strategic_blueprint": "Deep markdown text containing step-by-step masterclass strategy including budget pacing, campaign structure, creative hooks, offer advice, and post-launch rules",
   "subtasks": ["Subtask 1 (e.g. Understand budget constraints)", "Subtask 2 (e.g. Analyze competitors)", "Subtask 3 (e.g. Design campaign)"],
-  "strategic_context": "Deep markdown text providing the overarching strategy, pacing, and creative angles to guide the worker.",
   "key_questions": ["What exact product or niche are you selling?", "Is your Meta Pixel active?"]
 }`;
 }
@@ -281,6 +285,9 @@ function generatePerformanceReviewerPrompt(businessProfile: any) {
   return `You are the VP of Finance & Growth Reviewer.
 Your job is to audit budget pacing, expected ROAS, and performance metrics:
 - FAIL if the agent converted local currency (${currency}) without authorization or proposed mathematically illiterate budget pacing.
+- TIMELINE & PACING:
+  - If the user explicitly asked to run for a specific number of days, you MUST respect that constraint and evaluate performance pacing relative to that timeline. Do NOT fail the plan for running short-term if the user explicitly commanded it.
+  - If the user did NOT specify a timeline, verify if the budget pacing recommends a testing window of 4+ days. Proposing a 1-2 day test on an open-ended request is economically illiterate for Meta's learning algorithms—FAIL the plan in this scenario and instruct the worker to extend the test window.
 - PASS if the budget pacing, estimated ROAS, and customer acquisition metrics make complete growth sense.
 
 Respond ONLY with a JSON object:
@@ -1025,19 +1032,19 @@ serve(async (req) => {
         thinkingSteps.push('[Planning] Strategic planner phase encountered an error. Proceeding with fallback plan.')
         planJson = {
           currency: businessProfile?.currency || 'PKR',
+          strategic_blueprint: "Standard growth strategy: Campaign (Sales), Ad Sets, Ad Creatives matched to user budget scale.",
           subtasks: ["Understand budget constraints", "Analyze competitors", "Design standard growth campaign"],
-          strategic_context: "Standard growth strategy: Campaign (Sales), Ad Sets, Ad Creatives matched to user budget scale.",
           key_questions: ["What exact product are you selling?"]
         }
       }
 
       // Phase 2: Worker OODA Loop
-      thinkingSteps.push('⚙️ Executing Worker loop guided by Subtask Roadmap...')
+      thinkingSteps.push('⚙️ Executing Worker loop guided by Unified Roadmap & Blueprint...')
       const workerSystemPrompt = generateSystemPrompt(businessProfile, historical_context) +
-        `\n\n## ASSIGNED SUBTASKS:\n${JSON.stringify(planJson.subtasks || [], null, 2)}\n\n## STRATEGIC CONTEXT:\n${planJson.strategic_context || JSON.stringify(planJson, null, 2)}\n\nINSTRUCTIONS FOR YOUR RESPONSE:
+        `\n\n## MASTERCLASS STRATEGIC BLUEPRINT:\n${planJson.strategic_blueprint || ''}\n\n## ASSIGNED SUBTASKS:\n${JSON.stringify(planJson.subtasks || [], null, 2)}\n\nINSTRUCTIONS FOR YOUR RESPONSE:
 1. Deliver a comprehensive, deeply practical response that reads like an elite Growth Marketer / Chief Marketing Officer.
 2. NEVER convert local currency without user authorization. Use the exact currency specified (${planJson.currency || 'PKR'}).
-3. Use your tools autonomously to fulfill the assigned subtasks.
+3. Use your tools autonomously to execute the assigned subtasks, referencing the Strategic Blueprint for key constraints (like budget pacing, creative angles, or offer tweaks).
 4. Detail dynamic budget pacing matched to the user's specific scale (whether a lean test or a multi-week scale push), campaign structure, offer strategy, creative variations, post-launch rules, and ask a clarifying question.`;
 
       const workerMessages: any[] = [
