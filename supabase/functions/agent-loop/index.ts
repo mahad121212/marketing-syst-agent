@@ -179,23 +179,23 @@ HOLISTIC BUSINESS & MARKET CONTEXT:
   }
 
   return `You are MetaAgent Planner AI, a Chief Marketing Officer and $50M+ Meta Ads Growth Strategist.
-Your task is to analyze the user's request and build an unconstrained, deeply practical, masterclass advertising strategy.
+Your task is to analyze the user's request and build a high-level roadmap of subtasks that need to be accomplished. You do not solve the problem directly; instead, you break it down into actionable jobs for the Worker to execute.
 
 ${profileContext}
 
 ## Holistic First-Principles Reasoning Rules:
 1. HOLISTIC EVALUATION: Do NOT rely on rigid formulas, hardcoded budget tiers, or single-factor rules. Synthesize the ENTIRE business picture: target country CPM economics (e.g. US/UK high CPM vs PK/IN low CPM), product margin/AOV, business model (D2C, B2B, Lead Gen), conversion funnel length, and the user's available resources.
 2. CURRENCY INTEGRITY: Preserve the user's native currency (${businessProfile?.currency || 'PKR'}) at all times. Never convert currency without explicit user request.
-3. DYNAMIC PACING & STRUCTURE: Reason from first principles about how the budget should be paced over time and how the campaign architecture (Campaigns, Ad Sets, Ad Creatives) should be structured to maximize statistical efficiency and ROAS.
-4. BEYOND SETUP: Explain why the OFFER (free shipping, bundle discounts, value proposition) and CREATIVE HOOKS matter more than broad vs narrow targeting.
-5. POST-LAUNCH GUIDANCE & CLARIFICATION: Provide clear decision trees for post-launch monitoring (what to do if conversions occur vs if CPM/CPA is high) and ask sharp clarifying questions about their offer or Meta Pixel setup.
+3. ROADMAP CREATION: Break the user's goal into logical, sequential subtasks (e.g., "Analyze target audience", "Design campaign structure", "Write ad copy"). The Worker will decide how to execute these tasks using its available tools. Do not dictate which tools to use.
+4. STRATEGIC CONTEXT: Provide a brief strategic context to guide the worker's decision-making (e.g., budget pacing, offer leverage, creative angles).
 
 You MUST respond ONLY with a JSON object in this format (no markdown codeblock markers, no extraneous wrapper text):
 {
-  "internal_monologue": "Write a natural, first-person narrative monologue (2-4 paragraphs) reasoning holistically from first principles about the business, target market economics, product margin, budget pacing, campaign structure, and creative tactics.",
+  "internal_monologue": "Write a natural, first-person narrative monologue (2-4 paragraphs) reasoning holistically from first principles.",
   "currency": "${businessProfile?.currency || 'PKR'}",
   "is_total_wallet": true,
-  "strategic_blueprint": "Deep markdown text containing step-by-step masterclass strategy including budget pacing, campaign structure, creative hooks, offer advice, and post-launch rules",
+  "subtasks": ["Subtask 1 (e.g. Understand budget constraints)", "Subtask 2 (e.g. Analyze competitors)", "Subtask 3 (e.g. Design campaign)"],
+  "strategic_context": "Deep markdown text providing the overarching strategy, pacing, and creative angles to guide the worker.",
   "key_questions": ["What exact product or niche are you selling?", "Is your Meta Pixel active?"]
 }`;
 }
@@ -278,14 +278,14 @@ BUSINESS CONTEXT:
 
 ${profileContext}
 
-## Core Identity & Reasoning Mode
-You are a SENIOR MEDIA BUYER, not a task robot. Your value comes from STRATEGIC THINKING, not just tool execution.
+## Core Identity & Agency (Worker-Decides Architecture)
+You are an autonomous SENIOR MEDIA BUYER. The Strategic Planner has provided you with a ROADMAP OF SUBTASKS. Your job is NOT to blindly execute a script, but to evaluate those subtasks and independently decide HOW to accomplish them.
 
-### Reasoning Hierarchy (always follow this order):
-1. **Listen** — Fully understand what the user is really asking. Read between the lines. "I have 2000 PKR and want to hit a 6" means they have extremely limited budget and need maximum ROI — NOT "create a campaign with 2000 PKR daily budget."
-2. **Analyze** — Consider the user's business context, budget constraints, market (Pakistan/PKR vs US/USD), industry, and what realistic outcomes look like.
-3. **Advise** — Present your strategic recommendation with clear reasoning BEFORE taking action. Explain trade-offs.
-4. **Act** — Only execute after the user understands and agrees with your plan.
+### Tool Selection & Reasoning Hierarchy (always follow this order):
+1. **Review Subtasks** — Read the subtasks assigned to you by the Planner.
+2. **Evaluate Tool Inventory** — Review the exact tools available to you in this session. You have full agency to decide which tools match which subtasks.
+3. **Analyze Context** — Consider the user's business context, budget constraints, market (Pakistan/PKR vs US/USD), and industry before acting on the data retrieved by your tools.
+4. **Act & Advise** — Use the tools to execute the subtasks. Present your strategic recommendation with clear reasoning based on what you found.
 
 ### When NOT to Immediately Create Things
 If the user asks a strategic question ("what should I do?", "how should I spend?", "what's the best approach?"), your job is to ADVISE FIRST:
@@ -950,19 +950,20 @@ serve(async (req) => {
         thinkingSteps.push('[Planning] Strategic planner phase encountered an error. Proceeding with fallback plan.')
         planJson = {
           currency: businessProfile?.currency || 'PKR',
-          strategic_blueprint: "Standard growth strategy: Campaign (Sales), Ad Sets, Ad Creatives matched to user budget scale.",
+          subtasks: ["Understand budget constraints", "Analyze competitors", "Design standard growth campaign"],
+          strategic_context: "Standard growth strategy: Campaign (Sales), Ad Sets, Ad Creatives matched to user budget scale.",
           key_questions: ["What exact product are you selling?"]
         }
       }
 
       // Phase 2: Worker OODA Loop
-      thinkingSteps.push('⚙️ Executing Worker loop guided by Strategic Blueprint...')
+      thinkingSteps.push('⚙️ Executing Worker loop guided by Subtask Roadmap...')
       const workerSystemPrompt = generateSystemPrompt(businessProfile, historical_context) +
-        `\n\n## MASTERCLASS STRATEGIC BLUEPRINT:\n${planJson.strategic_blueprint || JSON.stringify(planJson, null, 2)}\n\nINSTRUCTIONS FOR YOUR RESPONSE:
+        `\n\n## ASSIGNED SUBTASKS:\n${JSON.stringify(planJson.subtasks || [], null, 2)}\n\n## STRATEGIC CONTEXT:\n${planJson.strategic_context || JSON.stringify(planJson, null, 2)}\n\nINSTRUCTIONS FOR YOUR RESPONSE:
 1. Deliver a comprehensive, deeply practical response that reads like an elite Growth Marketer / Chief Marketing Officer.
 2. NEVER convert local currency without user authorization. Use the exact currency specified (${planJson.currency || 'PKR'}).
-3. Detail dynamic budget pacing matched to the user's specific scale (whether a lean test or a multi-week scale push), campaign structure, offer strategy, creative variations, post-launch rules, and ask a clarifying question.
-4. Only call tools if the user explicitly commanded execution or confirmed a setup.`;
+3. Use your tools autonomously to fulfill the assigned subtasks.
+4. Detail dynamic budget pacing matched to the user's specific scale (whether a lean test or a multi-week scale push), campaign structure, offer strategy, creative variations, post-launch rules, and ask a clarifying question.`;
 
       const workerMessages: any[] = [
         { role: 'system', content: workerSystemPrompt },
