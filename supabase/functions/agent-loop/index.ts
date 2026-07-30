@@ -159,6 +159,202 @@ const AGENT_TOOLS = [
 ]
 
 // ============================================================
+// MARKETING KNOWLEDGE ENGINE (Phase 0)
+// ============================================================
+
+// Currency conversion rates to USD (approximate, for budget tier classification)
+const CURRENCY_TO_USD: Record<string, number> = {
+  'USD': 1, 'EUR': 1.09, 'GBP': 1.27, 'CAD': 0.74, 'AUD': 0.65,
+  'AED': 0.27, 'SAR': 0.27, 'QAR': 0.27, 'KWD': 3.26, 'BHD': 2.65,
+  'PKR': 0.0036, 'INR': 0.012, 'BDT': 0.0091, 'LKR': 0.0031,
+  'PHP': 0.018, 'IDR': 0.000063, 'VND': 0.000041, 'MYR': 0.22,
+  'THB': 0.028, 'NGN': 0.00063, 'KES': 0.0077, 'EGP': 0.020,
+  'ZAR': 0.054, 'BRL': 0.18, 'MXN': 0.058, 'TRY': 0.031,
+  'JPY': 0.0067, 'KRW': 0.00074, 'SGD': 0.74, 'NZD': 0.60
+}
+
+// Country code → market trust classification
+const MARKET_TRUST_MAP: Record<string, string> = {
+  // TRUST_DEFICIT — High purchase skepticism, social proof critical
+  'PK': 'TRUST_DEFICIT', 'IN': 'TRUST_DEFICIT', 'BD': 'TRUST_DEFICIT',
+  'LK': 'TRUST_DEFICIT', 'NP': 'TRUST_DEFICIT', 'PH': 'TRUST_DEFICIT',
+  'ID': 'TRUST_DEFICIT', 'VN': 'TRUST_DEFICIT', 'NG': 'TRUST_DEFICIT',
+  'KE': 'TRUST_DEFICIT', 'EG': 'TRUST_DEFICIT', 'GH': 'TRUST_DEFICIT',
+  'TZ': 'TRUST_DEFICIT',
+  // EMERGING — Growing e-commerce, mix of trust + aspiration
+  'AE': 'EMERGING', 'SA': 'EMERGING', 'QA': 'EMERGING', 'KW': 'EMERGING',
+  'BH': 'EMERGING', 'MY': 'EMERGING', 'TH': 'EMERGING', 'ZA': 'EMERGING',
+  'BR': 'EMERGING', 'MX': 'EMERGING', 'TR': 'EMERGING', 'CO': 'EMERGING',
+  'CL': 'EMERGING',
+  // MATURE — High e-commerce adoption, differentiation key
+  'US': 'MATURE', 'CA': 'MATURE', 'UK': 'MATURE', 'GB': 'MATURE',
+  'DE': 'MATURE', 'FR': 'MATURE', 'AU': 'MATURE', 'NZ': 'MATURE',
+  'JP': 'MATURE', 'KR': 'MATURE', 'SG': 'MATURE', 'NL': 'MATURE',
+  'SE': 'MATURE', 'NO': 'MATURE'
+}
+
+// Country name → code mapping (for business profiles that store full names)
+const COUNTRY_NAME_TO_CODE: Record<string, string> = {
+  'pakistan': 'PK', 'india': 'IN', 'bangladesh': 'BD', 'sri lanka': 'LK',
+  'nepal': 'NP', 'philippines': 'PH', 'indonesia': 'ID', 'vietnam': 'VN',
+  'nigeria': 'NG', 'kenya': 'KE', 'egypt': 'EG', 'ghana': 'GH',
+  'tanzania': 'TZ', 'united arab emirates': 'AE', 'uae': 'AE',
+  'saudi arabia': 'SA', 'qatar': 'QA', 'kuwait': 'KW', 'bahrain': 'BH',
+  'malaysia': 'MY', 'thailand': 'TH', 'south africa': 'ZA',
+  'brazil': 'BR', 'mexico': 'MX', 'turkey': 'TR', 'colombia': 'CO',
+  'chile': 'CL', 'united states': 'US', 'usa': 'US', 'canada': 'CA',
+  'united kingdom': 'UK', 'uk': 'UK', 'germany': 'DE', 'france': 'FR',
+  'australia': 'AU', 'new zealand': 'NZ', 'japan': 'JP',
+  'south korea': 'KR', 'singapore': 'SG', 'netherlands': 'NL',
+  'sweden': 'SE', 'norway': 'NO'
+}
+
+// Intent classification keyword groups
+const INTENT_KEYWORDS: Record<string, string[]> = {
+  'BRAND_BUILDING': ['experience', 'brand', 'awareness', 'trust', 'organic', 'engage', 'story', 'feel', 'community', 'presence', 'recognition', 'loyalty', 'not just sell', 'not sell'],
+  'DIRECT_RESPONSE': ['sales', 'conversions', 'roas', 'profit', 'revenue', 'orders', 'buy', 'purchase', 'checkout', 'sell', 'selling', 'profitable'],
+  'SCALING': ['scale', 'increase', 'grow', 'expand', 'double', 'triple', 'maximize', 'boost', 'amplify'],
+  'TESTING': ['test', 'try', 'experiment', 'new', 'launch', 'first', 'start', 'begin', 'pilot', 'different perspective']
+}
+
+function classifyUserIntent(prompt: string, businessProfile: any, campaignCount: number) {
+  const promptLower = prompt.toLowerCase()
+
+  // 1. Budget Tier Classification
+  // Extract budget amount from prompt using regex
+  const budgetPatterns = [
+    /(?:pkr|inr|usd|aed|sar|gbp|eur|rs\.?|₹|\$|£|€)\s*([\d,]+(?:\.\d+)?)\s*(?:k|thousand|lac|lakh)?/i,
+    /([\d,]+(?:\.\d+)?)\s*(?:k|thousand|lac|lakh)?\s*(?:pkr|inr|usd|aed|sar|gbp|eur|rupees?|dollars?|dirhams?|rs)/i,
+    /(?:budget|have|got|spend)\s*(?:is|of|us)?\s*(?:pkr|inr|usd|aed|rs\.?|₹|\$|£|€)?\s*([\d,]+(?:\.\d+)?)\s*(?:k|thousand|lac|lakh)?/i
+  ]
+
+  let extractedBudget: any = null
+  let budgetTier = 'GROWTH' // default
+
+  for (const pattern of budgetPatterns) {
+    const match = promptLower.match(pattern)
+    if (match) {
+      let amount = parseFloat(match[1].replace(/,/g, ''))
+      // Handle multipliers
+      if (/k|thousand/i.test(match[0])) amount *= 1000
+      if (/lac|lakh/i.test(match[0])) amount *= 100000
+
+      const currency = businessProfile?.currency || 'PKR'
+      const rate = CURRENCY_TO_USD[currency] || 0.01
+      const usdEquivalent = amount * rate
+
+      extractedBudget = { amount, currency, usd_equivalent: Math.round(usdEquivalent) }
+
+      if (usdEquivalent < 100) budgetTier = 'MICRO'
+      else if (usdEquivalent < 1000) budgetTier = 'GROWTH'
+      else budgetTier = 'SCALE'
+      break
+    }
+  }
+
+  // Fallback to business profile budget if not found in prompt
+  if (!extractedBudget && businessProfile?.monthly_ad_budget) {
+    const currency = businessProfile.currency || 'PKR'
+    const rate = CURRENCY_TO_USD[currency] || 0.01
+    const usdEquivalent = businessProfile.monthly_ad_budget * rate
+    extractedBudget = { amount: businessProfile.monthly_ad_budget, currency, usd_equivalent: Math.round(usdEquivalent) }
+    if (usdEquivalent < 100) budgetTier = 'MICRO'
+    else if (usdEquivalent < 1000) budgetTier = 'GROWTH'
+    else budgetTier = 'SCALE'
+  }
+
+  // 2. Market Trust Classification
+  let countryRaw = (businessProfile?.country || 'Pakistan').trim()
+  let countryCode = countryRaw.length <= 3
+    ? countryRaw.toUpperCase().substring(0, 2)
+    : (COUNTRY_NAME_TO_CODE[countryRaw.toLowerCase()] || 'PK')
+  const marketType = MARKET_TRUST_MAP[countryCode] || 'EMERGING'
+
+  // 3. Intent Classification (keyword matching)
+  const intentTypes: string[] = []
+  for (const [intent, keywords] of Object.entries(INTENT_KEYWORDS)) {
+    if (keywords.some(kw => promptLower.includes(kw))) {
+      intentTypes.push(intent)
+    }
+  }
+  if (intentTypes.length === 0) intentTypes.push('DIRECT_RESPONSE')
+
+  // 4. Industry from business profile
+  const industry = (businessProfile?.industry || 'general').toLowerCase()
+
+  // 5. Campaign Stage
+  let campaignStage = 'COLD_START'
+  if (campaignCount > 0) campaignStage = 'ESTABLISHED'
+
+  return {
+    budget_tier: budgetTier,
+    market_type: marketType,
+    intent_types: intentTypes,
+    industry,
+    campaign_stage: campaignStage,
+    extracted_budget: extractedBudget
+  }
+}
+
+async function retrieveKnowledge(supabaseClient: any, dimensions: any): Promise<string> {
+  try {
+    const { data: allKnowledge, error } = await supabaseClient
+      .from('marketing_knowledge')
+      .select('title, content, dimensions, priority')
+      .eq('is_active', true)
+
+    if (error || !allKnowledge || allKnowledge.length === 0) {
+      console.error('Knowledge retrieval failed:', error?.message || 'No documents found')
+      return ''
+    }
+
+    // Score each document by dimension overlap
+    const scored = allKnowledge.map((doc: any) => {
+      let score = 0
+      const dims = doc.dimensions || {}
+
+      // Budget tier match (weight: 2)
+      if (dims.budget_tiers?.includes(dimensions.budget_tier) || dims.budget_tiers?.includes('ALL')) score += 2
+
+      // Market type match (weight: 2)
+      if (dims.market_types?.includes(dimensions.market_type) || dims.market_types?.includes('ALL')) score += 2
+
+      // Intent match (weight: 3 — strongest signal)
+      for (const intent of dimensions.intent_types) {
+        if (dims.intent_types?.includes(intent) || dims.intent_types?.includes('ALL')) { score += 3; break }
+      }
+
+      // Campaign stage match (weight: 1)
+      if (dims.campaign_stages?.includes(dimensions.campaign_stage) || dims.campaign_stages?.includes('ALL')) score += 1
+
+      // Industry match (weight: 1)
+      if (dims.industries?.includes(dimensions.industry) || dims.industries?.includes('ALL')) score += 1
+
+      // Priority boost (0-1 range)
+      score += (doc.priority || 5) / 10
+
+      return { ...doc, score }
+    })
+
+    // Sort by score descending, take top 5
+    scored.sort((a: any, b: any) => b.score - a.score)
+    const topDocs = scored.slice(0, 5)
+
+    if (topDocs.length === 0) return ''
+
+    // Concatenate into knowledge context
+    const knowledgeContext = topDocs
+      .map((doc: any) => `### ${doc.title}\n${doc.content}`)
+      .join('\n\n---\n\n')
+
+    return knowledgeContext
+  } catch (err: any) {
+    console.error('Knowledge retrieval error:', err.message)
+    return ''
+  }
+}
+
+// ============================================================
 // SYSTEM PROMPT GENERATORS FOR DEEP REASONING
 // ============================================================
 function generatePlannerPrompt(businessProfile: any, historical_context?: string) {
@@ -998,7 +1194,33 @@ serve(async (req) => {
 
     if (reasoning_mode === 'deep') {
       thinkingSteps.push('🧠 Running in Deep Reasoning Mode...')
-      thinkingSteps.push('[Planning] Strategic planner analyzing requirements...')
+
+      // ===== PHASE 0: Marketing Knowledge Engine =====
+      thinkingSteps.push('📚 Phase 0: Classifying intent & retrieving marketing intelligence...')
+
+      // Count existing campaigns for stage classification
+      const { count: campaignCount } = await supabaseClient
+        .from('campaigns')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+
+      const dimensions = classifyUserIntent(prompt, businessProfile, campaignCount || 0)
+      thinkingSteps.push(`📊 Classified: Budget=${dimensions.budget_tier} (${dimensions.extracted_budget ? '$' + dimensions.extracted_budget.usd_equivalent + ' USD equiv.' : 'unknown'}), Market=${dimensions.market_type}, Intent=${dimensions.intent_types.join('+')}, Stage=${dimensions.campaign_stage}`)
+
+      const knowledgeContext = await retrieveKnowledge(supabaseClient, dimensions)
+      if (knowledgeContext) {
+        thinkingSteps.push(`📚 Retrieved ${knowledgeContext.split('###').length - 1} marketing knowledge frameworks as context.`)
+      } else {
+        thinkingSteps.push('📚 No knowledge frameworks matched (proceeding with LLM general knowledge).')
+      }
+
+      // Build the enriched Planner input with knowledge context
+      const plannerUserMessage = knowledgeContext
+        ? `## MARKETING INTELLIGENCE CONTEXT (Retrieved Frameworks)\nThe following are universal marketing frameworks retrieved based on the user's context. Use these as reference material to inform your strategic blueprint — they are principles, not commands.\n\n${knowledgeContext}\n\n## CLASSIFIED DIMENSIONS\n- Budget Tier: ${dimensions.budget_tier}${dimensions.extracted_budget ? ` (${dimensions.extracted_budget.amount} ${dimensions.extracted_budget.currency} ≈ $${dimensions.extracted_budget.usd_equivalent} USD)` : ''}\n- Market Type: ${dimensions.market_type}\n- User Intent: ${dimensions.intent_types.join(', ')}\n- Campaign Stage: ${dimensions.campaign_stage}\n- Industry: ${dimensions.industry}\n\n## USER REQUEST\n${prompt}`
+        : prompt
+
+      // ===== PHASE 1: Strategic Planner =====
+      thinkingSteps.push('[Planning] Strategic planner analyzing requirements with knowledge context...')
       
       let planJson: any = null
       try {
@@ -1011,7 +1233,7 @@ serve(async (req) => {
             max_tokens: maxTokens,
             messages: [
               { role: 'system', content: generatePlannerPrompt(businessProfile, historical_context) },
-              { role: 'user', content: prompt }
+              { role: 'user', content: plannerUserMessage }
             ]
           })
         })
