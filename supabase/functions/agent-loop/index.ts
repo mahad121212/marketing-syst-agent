@@ -884,8 +884,8 @@ serve(async (req) => {
     const openRouterKey = settings.openrouter_key
     const model = settings.preferred_model || 'google/gemini-3.6-flash'
     const isGemini = isGeminiKey(openRouterKey)
-    const maxTokens = isGemini ? 2000 : 1200
-    const reviewerMaxTokens = isGemini ? 1000 : 800
+    const maxTokens = isGemini ? 2000 : 800
+    const reviewerMaxTokens = isGemini ? 1000 : 400
 
     const { error: userMsgErr } = await supabaseClient.from('chat_messages').insert({
       session_id,
