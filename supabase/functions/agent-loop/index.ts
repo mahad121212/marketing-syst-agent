@@ -883,6 +883,9 @@ serve(async (req) => {
 
     const openRouterKey = settings.openrouter_key
     const model = settings.preferred_model || 'google/gemini-3.6-flash'
+    const isGemini = isGeminiKey(openRouterKey)
+    const maxTokens = isGemini ? 2000 : 1200
+    const reviewerMaxTokens = isGemini ? 1000 : 800
 
     const { error: userMsgErr } = await supabaseClient.from('chat_messages').insert({
       session_id,
@@ -923,7 +926,7 @@ serve(async (req) => {
           headers: reqDetails.headers,
           body: JSON.stringify({
             model: reqDetails.model,
-            max_tokens: 2000,
+            max_tokens: maxTokens,
             messages: [
               { role: 'system', content: generatePlannerPrompt(businessProfile, historical_context) },
               { role: 'user', content: prompt }
@@ -976,7 +979,7 @@ serve(async (req) => {
           headers: reqDetails.headers,
           body: JSON.stringify({
             model: reqDetails.model,
-            max_tokens: 2000,
+            max_tokens: maxTokens,
             messages: workerMessages,
             tools: AGENT_TOOLS,
             tool_choice: 'auto'
@@ -1036,7 +1039,7 @@ serve(async (req) => {
             headers: reqDetails.headers,
             body: JSON.stringify({
               model: reqDetails.model,
-              max_tokens: 1000,
+              max_tokens: reviewerMaxTokens,
               messages: [
                 { role: 'system', content: generateReviewerPrompt(role, businessProfile) },
                 { role: 'user', content: `Original request: ${prompt}\nPlanner Plan: ${JSON.stringify(planJson)}\nWorker Tools Executed: ${JSON.stringify(toolExecutions)}\nWorker Draft Response: ${finalContent}` }
@@ -1072,7 +1075,7 @@ serve(async (req) => {
           headers: reqDetails.headers,
           body: JSON.stringify({
             model: reqDetails.model,
-            max_tokens: 1000,
+            max_tokens: reviewerMaxTokens,
             messages: [
               { role: 'system', content: generateSynthesizerPrompt(businessProfile) },
               { role: 'user', content: `Original request: ${prompt}\nWorker Draft Response: ${finalContent}\nReviewer Feedback: ${JSON.stringify(reviews)}` }
@@ -1109,7 +1112,7 @@ serve(async (req) => {
             headers: reqDetails.headers,
             body: JSON.stringify({
               model: reqDetails.model,
-              max_tokens: 2000,
+              max_tokens: maxTokens,
               messages: workerMessages,
               tools: AGENT_TOOLS,
               tool_choice: 'auto'
@@ -1180,7 +1183,7 @@ serve(async (req) => {
           headers: reqDetails.headers,
           body: JSON.stringify({
             model: reqDetails.model,
-            max_tokens: 2000,
+            max_tokens: maxTokens,
             messages: finalMessages,
             tools: AGENT_TOOLS,
             tool_choice: 'auto'
