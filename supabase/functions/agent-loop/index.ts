@@ -200,44 +200,94 @@ You MUST respond ONLY with a JSON object in this format (no markdown codeblock m
 }`;
 }
 
-function generateReviewerPrompt(role: 'budget' | 'targeting' | 'risk', businessProfile: any) {
-  let profileContext = '';
-  if (businessProfile) {
-    profileContext = `
-Business: ${businessProfile.business_name} (${businessProfile.country})
-Currency: ${businessProfile.currency || 'PKR'}
-`;
-  }
-
-  const roleDescriptions = {
-    budget: `You are the VP of Finance & Growth Reviewer.
-Your job is to audit the response for holistic financial precision:
-- FAIL if the agent converted local currency without authorization.
-- FAIL if the budget pacing is economically illiterate for the business model, target market CPMs, or user constraints.
-- PASS if the budget allocation and pacing are strategically sound and mathematically grounded in the full business context.`,
-
-    targeting: `You are the Chief Strategy Officer Reviewer.
+function generateStrategyReviewerPrompt(businessProfile: any) {
+  let profileContext = businessProfile ? `Business: ${businessProfile.business_name} (${businessProfile.country})` : '';
+  return `You are the Chief Strategy Officer Reviewer.
 Your job is to audit the response for holistic strategy depth and actionable intelligence:
-- FAIL if the response is generic, generic 3-bullet advice, or relies on rigid template rules.
-- PASS ONLY if the response provides a masterclass breakdown: clear campaign structure, creative strategy, offer leverage, post-launch decision tree, and clarifying questions tailored to the business.`,
-
-    risk: `You are the Technical Operations Reviewer.
-Your job is to audit tool execution and operational safety:
-- Check if tool calls strictly match user intent.
-- Ensure the agent does not force-create campaigns on Meta if the user only asked for strategic advice.`
-  };
-
-  return `${roleDescriptions[role]}
+- FAIL if the response is generic, relies on rigid templates, or lacks a clear campaign architecture, offer advice, and target audience alignment.
+- PASS ONLY if the response provides a masterclass strategic breakdown tailored to the business.
 ${profileContext}
-
-Analyze the user's request, the planner's blueprint, and the draft response.
-Write a narrative first-person thought block evaluating the plan holistically from your role's perspective, and deliver a verdict ("PASS" or "FAIL").
 
 Respond ONLY with a JSON object:
 {
   "verdict": "PASS" | "FAIL",
-  "internal_thought": "Write 1-2 paragraphs of natural, first-person narrative thought evaluating this plan holistically",
-  "feedback": "detailed explanation of pass or fail if verdict is FAIL"
+  "internal_thought": "Write 1-2 paragraphs of natural, first-person narrative thought evaluating this strategy",
+  "feedback": "Detailed explanation of strategic improvements needed if verdict is FAIL"
+}`;
+}
+
+function generateCopyReviewerPrompt(businessProfile: any) {
+  return `You are the Lead Copywriting Reviewer.
+Your job is to audit the copywriting suggestions, ad copy hooks, and primary texts:
+- FAIL if the copy is dry, standard AI-sounding ("Unleash your potential", "Are you tired of X?"), or lacks emotional hooks.
+- PASS if the copywriting proposals use modern marketing hooks (like problem-agitation-solution, hook-story-offer) tailored to target avatar desires.
+
+Respond ONLY with a JSON object:
+{
+  "verdict": "PASS" | "FAIL",
+  "internal_thought": "Write 1-2 paragraphs of natural, first-person narrative thought evaluating the copy quality",
+  "feedback": "Detailed explanation of copy improvements needed if verdict is FAIL"
+}`;
+}
+
+function generateCreativeReviewerPrompt(businessProfile: any) {
+  return `You are the Creative Director Reviewer.
+Your job is to audit visual layout proposals, image/video suggestions, and creative hooks:
+- FAIL if the suggestions are vague ("use a high quality photo") or lack actionable details for a designer.
+- PASS if the creative suggestions describe exact visual hooks, video pacing, overlay texts, and CTA styles.
+
+Respond ONLY with a JSON object:
+{
+  "verdict": "PASS" | "FAIL",
+  "internal_thought": "Write 1-2 paragraphs of natural, first-person narrative thought evaluating the creative proposals",
+  "feedback": "Detailed explanation of creative improvements needed if verdict is FAIL"
+}`;
+}
+
+function generateDiversityReviewerPrompt(businessProfile: any) {
+  let budgetCap = businessProfile?.monthly_ad_budget ? `${businessProfile.monthly_ad_budget} ${businessProfile.currency || 'USD'}` : 'Not provided';
+  return `You are the Creative Diversity Auditor.
+Your job is to contextually audit the diversity of ad angles, hooks, and formats:
+- evaluate contextually based on budget scale. The user's monthly budget cap is: ${budgetCap}.
+- DO NOT be dogmatically biased. If the budget is very small (e.g. under 5,000 PKR / $50 USD total), do NOT fail the plan for having only a couple of simple static ad angles.
+- If the budget is healthy, check if there is a mix of formats (e.g. UGC vs Carousel vs Static Image) or angles to prevent creative fatigue.
+- FAIL only if there is a massive misalignment where a high budget runs redundant/copied ads, or if the angles proposed are completely repetitive. Otherwise PASS with constructive feedback.
+
+Respond ONLY with a JSON object:
+{
+  "verdict": "PASS" | "FAIL",
+  "internal_thought": "Write 1-2 paragraphs of natural, first-person narrative thought evaluating the creative diversity contextually",
+  "feedback": "Detailed explanation of creative diversity improvements needed if verdict is FAIL"
+}`;
+}
+
+function generateComplianceReviewerPrompt(businessProfile: any) {
+  return `You are the Technical Operations & Compliance Auditor.
+Your job is to audit tool execution, compliance with Meta policies, and operational safety:
+- Ensure the agent does not force-create campaigns on Meta if the user only asked for strategic advice.
+- Ensure the agent respects temporal discipline rules (e.g. no modifying campaigns in learning phase).
+- Ensure no Meta policy compliance warnings (no misleading claims, forbidden words).
+
+Respond ONLY with a JSON object:
+{
+  "verdict": "PASS" | "FAIL",
+  "internal_thought": "Write 1-2 paragraphs of natural, first-person narrative thought evaluating execution safety and policy compliance",
+  "feedback": "Detailed explanation of compliance or tool safety failures if verdict is FAIL"
+}`;
+}
+
+function generatePerformanceReviewerPrompt(businessProfile: any) {
+  let currency = businessProfile?.currency || 'PKR';
+  return `You are the VP of Finance & Growth Reviewer.
+Your job is to audit budget pacing, expected ROAS, and performance metrics:
+- FAIL if the agent converted local currency (${currency}) without authorization or proposed mathematically illiterate budget pacing.
+- PASS if the budget pacing, estimated ROAS, and customer acquisition metrics make complete growth sense.
+
+Respond ONLY with a JSON object:
+{
+  "verdict": "PASS" | "FAIL",
+  "internal_thought": "Write 1-2 paragraphs of natural, first-person narrative thought evaluating the budget and performance expectations",
+  "feedback": "Detailed explanation of financial pacing improvements needed if verdict is FAIL"
 }`;
 }
 
@@ -248,9 +298,34 @@ Review the reviewer verdicts. If ANY reviewer marked "FAIL", synthesize their fe
 Respond ONLY with a JSON object:
 {
   "all_passed": true | false,
-  "internal_thought": "Write 1 paragraph summarizing the consensus of all 3 reviewers out loud",
+  "internal_thought": "Write 1 paragraph summarizing the consensus of all 6 reviewers out loud",
   "actionable_feedback": "synthesis of feedback if any failed, or empty if all passed"
 }`;
+}
+
+function generatePlanReviewerPrompt(businessProfile: any) {
+  return `You are the Plan Reviewer Auditor.
+Critique the planning process itself to improve future tasks:
+- Evaluate whether the Planner's roadmap was structured optimally.
+- Evaluate whether the Worker executed all subtasks effectively.
+- Outline key strategic adjustments for future runs.
+
+Respond ONLY with a JSON object:
+{
+  "internal_thought": "Write 1 paragraph of natural, first-person thoughts on the planning process",
+  "critique": "Detailed critique of the subtasks and tool selection path",
+  "lessons_learned": "Actionable takeaways to improve future campaign setups"
+}`;
+}
+
+function generateFormatterPrompt() {
+  return `You are the Expert Content Formatter.
+Your task is to take the final approved ad plan/strategy and convert it into a beautiful, professional, and easy-to-read markdown layout:
+- Highlight key strategic takeaways, budget allocations, ad structure, copywriting hooks, and visual details.
+- Use bullet points, bold text, warning blocks, and tables where appropriate to maximize readability.
+- Maintain the exact currency and numbers proposed.
+
+Respond ONLY with the formatted final response in markdown.`;
 }
 
 // ============================================================
@@ -1031,8 +1106,16 @@ serve(async (req) => {
       thinkingSteps.push('📋 Convening Senior Growth Advisory Committee...')
       const reviewerModel = model // Use the user's primary selected model for reviewer quality gate
       
-      const roles: ('budget' | 'targeting' | 'risk')[] = ['budget', 'targeting', 'risk']
-      const reviewerPromises = roles.map(async (role) => {
+      const reviewerConfigs = [
+        { id: 'strategy', label: '🎯 Strategy & Targeting Reviewer', promptFn: generateStrategyReviewerPrompt },
+        { id: 'copy', label: '✍️ Lead Copywriting Reviewer', promptFn: generateCopyReviewerPrompt },
+        { id: 'creative', label: '🎨 Creative Director Reviewer', promptFn: generateCreativeReviewerPrompt },
+        { id: 'diversity', label: '🎭 Creative Diversity Auditor', promptFn: generateDiversityReviewerPrompt },
+        { id: 'compliance', label: '🛡️ Risk & Compliance Auditor', promptFn: generateComplianceReviewerPrompt },
+        { id: 'performance', label: '📊 Finance & Performance Reviewer', promptFn: generatePerformanceReviewerPrompt }
+      ]
+
+      const reviewerPromises = reviewerConfigs.map(async (config) => {
         try {
           const reqDetails = getLLMRequestDetails(openRouterKey, reviewerModel)
           const reviewerRes = await fetch(reqDetails.url, {
@@ -1042,7 +1125,7 @@ serve(async (req) => {
               model: reqDetails.model,
               max_tokens: reviewerMaxTokens,
               messages: [
-                { role: 'system', content: generateReviewerPrompt(role, businessProfile) },
+                { role: 'system', content: config.promptFn(businessProfile) },
                 { role: 'user', content: `Original request: ${prompt}\nPlanner Plan: ${JSON.stringify(planJson)}\nWorker Tools Executed: ${JSON.stringify(toolExecutions)}\nWorker Draft Response: ${finalContent}` }
               ]
             })
@@ -1050,20 +1133,19 @@ serve(async (req) => {
           if (!reviewerRes.ok) throw new Error(await reviewerRes.text())
           const data = await reviewerRes.json()
           const clean = (data.choices[0].message.content || '{}').replace(/```json/g, '').replace(/```/g, '').trim()
-          return { role, ...JSON.parse(clean) }
+          return { role: config.id, label: config.label, ...JSON.parse(clean) }
         } catch (err: any) {
-          console.error(`Reviewer ${role} failed:`, err.message)
-          return { role, verdict: 'PASS', internal_thought: 'Verified basic constraints.', feedback: 'Skipped due to transient error.' }
+          console.error(`Reviewer ${config.id} failed:`, err.message)
+          return { role: config.id, label: config.label, verdict: 'PASS', internal_thought: 'Verified basic constraints.', feedback: 'Skipped due to transient error.' }
         }
       })
 
       const reviews = await Promise.all(reviewerPromises)
       for (const r of reviews) {
-        const roleLabel = r.role === 'budget' ? '📊 Budget & Pacing Reviewer' : r.role === 'targeting' ? '🎯 Strategy & Targeting Reviewer' : '🛡️ Risk & Compliance Auditor';
         if (r.internal_thought) {
-          thinkingSteps.push(`${roleLabel} Thought:\n"${r.internal_thought}"`);
+          thinkingSteps.push(`${r.label} Thought:\n"${r.internal_thought}"`);
         } else {
-          thinkingSteps.push(`${roleLabel} (${r.verdict}): "${r.feedback || 'Strategy validated.'}"`);
+          thinkingSteps.push(`${r.label} (${r.verdict}): "${r.feedback || 'Strategy validated.'}"`);
         }
       }
 
@@ -1161,6 +1243,58 @@ serve(async (req) => {
         thinkingSteps.push('✅ Final Strategy Refined: All reviewer feedback incorporated. Finalizing response.')
       } else {
         thinkingSteps.push(`✅ Quality Gate Consensus: ${synthJson.internal_thought || 'All strategic perspectives validated the plan without objection. Strategy ready.'}`)
+      }
+
+      // Phase 10: Plan Reviewer (Critiques the planning process)
+      thinkingSteps.push('📋 Conducting post-process planning critique...')
+      try {
+        const reqDetails = getLLMRequestDetails(openRouterKey, model)
+        const planReviewRes = await fetch(reqDetails.url, {
+          method: 'POST',
+          headers: reqDetails.headers,
+          body: JSON.stringify({
+            model: reqDetails.model,
+            max_tokens: reviewerMaxTokens,
+            messages: [
+              { role: 'system', content: generatePlanReviewerPrompt(businessProfile) },
+              { role: 'user', content: `Planner Subtasks: ${JSON.stringify(planJson.subtasks)}\nWorker Tools Executed: ${JSON.stringify(toolExecutions)}\nFinal Draft: ${finalContent}` }
+            ]
+          })
+        })
+        if (planReviewRes.ok) {
+          const data = await planReviewRes.json()
+          const clean = (data.choices[0].message.content || '{}').replace(/```json/g, '').replace(/```/g, '').trim()
+          const parsed = JSON.parse(clean)
+          if (parsed.critique) {
+            thinkingSteps.push(`📋 Plan Reviewer Critique:\n"${parsed.critique}"\n*Lessons Learned:* "${parsed.lessons_learned || ''}"`)
+          }
+        }
+      } catch (err: any) {
+        console.error('Plan Reviewer failed:', err.message)
+      }
+
+      // Phase 11: Formatter
+      thinkingSteps.push('✍️ Formatting finalized ad strategy layout...')
+      try {
+        const reqDetails = getLLMRequestDetails(openRouterKey, model)
+        const formatterRes = await fetch(reqDetails.url, {
+          method: 'POST',
+          headers: reqDetails.headers,
+          body: JSON.stringify({
+            model: reqDetails.model,
+            max_tokens: maxTokens,
+            messages: [
+              { role: 'system', content: generateFormatterPrompt() },
+              { role: 'user', content: `Structure and format this content beautifully:\n\n${finalContent}` }
+            ]
+          })
+        })
+        if (formatterRes.ok) {
+          const data = await formatterRes.json()
+          finalContent = data.choices[0].message.content || finalContent
+        }
+      } catch (err: any) {
+        console.error('Formatter failed:', err.message)
       }
 
     } else {
