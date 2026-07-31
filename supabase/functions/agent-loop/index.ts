@@ -389,13 +389,18 @@ ${profileContext}
    - **Strategic Blueprint**: Write a detailed markdown strategy covering budget pacing logic, creative hook themes, average order value leverage, and post-launch decision trees.
    - **Subtasks Roadmap**: Provide a sequential checklist of jobs the Worker needs to execute to achieve the blueprint. The Worker will autonomously choose the best tools to perform these jobs.
 
+## Intent Classification & Output Format
+Is the user asking for a campaign strategy, OR are they just asking a general question (or providing a conversational follow-up)?
+
 You MUST respond ONLY with a JSON object in this format (no markdown codeblock markers, no extraneous wrapper text):
 {
-  "internal_monologue": "Write a natural, first-person narrative monologue (2-4 paragraphs) reasoning holistically from first principles.",
+  "intent": "CAMPAIGN_STRATEGY" | "CONVERSATION",
+  "internal_monologue": "Write a natural, first-person narrative monologue reasoning about the user's request.",
+  "conversational_response": "(ONLY if intent is CONVERSATION) The direct, conversational answer to the user.",
   "currency": "${businessProfile?.currency || 'PKR'}",
   "is_total_wallet": true,
-  "strategic_blueprint": "Deep markdown text containing step-by-step masterclass strategy including budget pacing, campaign structure, creative hooks, offer advice, and post-launch rules",
-  "subtasks": ["Subtask 1 (e.g. Understand budget constraints)", "Subtask 2 (e.g. Analyze competitors)", "Subtask 3 (e.g. Design campaign)"],
+  "strategic_blueprint": "(ONLY if intent is CAMPAIGN_STRATEGY) Deep markdown text containing step-by-step masterclass strategy including budget pacing, campaign structure, creative hooks, offer advice, and post-launch rules",
+  "subtasks": ["(ONLY if intent is CAMPAIGN_STRATEGY) Subtask 1", "Subtask 2"],
   "key_questions": ["What exact product or niche are you selling?", "Is your Meta Pixel active?"]
 }`;
 }
@@ -1261,8 +1266,12 @@ serve(async (req) => {
       }
 
       // Phase 2: Worker OODA Loop
-      thinkingSteps.push('⚙️ Executing Worker loop guided by Unified Roadmap & Blueprint...')
-      const workerSystemPrompt = generateSystemPrompt(businessProfile, historical_context) +
+      if (planJson.intent === 'CONVERSATION') {
+        thinkingSteps.push('💬 Conversational intent detected. Bypassing strategic deep dive.')
+        finalContent = planJson.conversational_response || "I'm here to help. Could you clarify what you mean?"
+      } else {
+        thinkingSteps.push('⚙️ Executing Worker loop guided by Unified Roadmap & Blueprint...')
+        const workerSystemPrompt = generateSystemPrompt(businessProfile, historical_context) +
         `\n\n## MASTERCLASS STRATEGIC BLUEPRINT:\n${planJson.strategic_blueprint || ''}\n\n## ASSIGNED SUBTASKS:\n${JSON.stringify(planJson.subtasks || [], null, 2)}\n\nINSTRUCTIONS FOR YOUR RESPONSE:
 1. Deliver a comprehensive, deeply practical response that reads like an elite Growth Marketer / Chief Marketing Officer.
 2. NEVER convert local currency without user authorization. Use the exact currency specified (${planJson.currency || 'PKR'}).
@@ -1525,7 +1534,8 @@ serve(async (req) => {
       } catch (err: any) {
         console.error('Formatter failed:', err.message)
       }
-
+      
+      } // End of CAMPAIGN_STRATEGY else block
     } else {
       // Fast Mode (Default)
       thinkingSteps.push('Initializing Context-Aware OODA Loop...')
