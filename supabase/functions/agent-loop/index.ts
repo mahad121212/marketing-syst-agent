@@ -357,145 +357,180 @@ async function retrieveKnowledge(supabaseClient: any, dimensions: any): Promise<
 // ============================================================
 // SYSTEM PROMPT GENERATORS FOR DEEP REASONING
 // ============================================================
-function generatePlannerPrompt(businessProfile: any, historical_context?: string) {
+function generateIntentRouterPrompt(businessProfile: any, historical_context?: string) {
   let profileContext = 'No business profile found. Ask the user to fill out their Business Profile in the dashboard.';
   
   if (businessProfile) {
     profileContext = `
 HOLISTIC BUSINESS & MARKET CONTEXT:
 - Business Name: ${businessProfile.business_name}
-- Industry / Niche: ${businessProfile.industry}
-- Business Model & Description: ${businessProfile.business_description}
 - Target Market & Currency: ${businessProfile.country} (${businessProfile.currency || 'USD'})
-- Target CPA: ${businessProfile.target_cpa ? businessProfile.target_cpa + ' ' + (businessProfile.currency || 'USD') : 'Not provided'}
-- Target ROAS: ${businessProfile.target_roas ? businessProfile.target_roas + 'x' : 'Not provided'}
 - Monthly Ad Budget Cap: ${businessProfile.monthly_ad_budget ? businessProfile.monthly_ad_budget + ' ' + (businessProfile.currency || 'USD') + '/mo' : 'Not provided'}
-- Growth Stage: ${businessProfile.business_stage}
 `;
   }
 
-  return `You are MetaAgent Planner AI, a Chief Marketing Officer and $50M+ Meta Ads Growth Strategist.
-Your task is to analyze the user's request and build both a comprehensive strategic blueprint AND a roadmapped checklist of subtasks.
+  return `You are the Intent Router & Blackboard Initiator.
+Your task is to analyze the user's latest request and route it correctly.
 
 ${profileContext}
 
-## Holistic First-Principles Reasoning Rules:
-1. HOLISTIC EVALUATION: Do NOT rely on rigid formulas or hardcoded rules. Synthesize target country CPM economics, margin/AOV, business model, and user resources.
-2. CURRENCY INTEGRITY: Preserve the user's native currency (${businessProfile?.currency || 'PKR'}) at all times.
-3. TIMELINE & PACING GUARDRAILS:
-   - **Direct User Constraint**: If the user explicitly asks to run a campaign for a specific duration (e.g. "run for 2 days"), you MUST respect and match your strategy to this timeline.
-   - **Open-Ended Strategy**: If the timeline is open-ended, reason from first principles. Propose a robust budget test pacing plan (recommend 4+ days to capture daily fluctuations and allow Meta's machine learning/CPA optimization to gather adequate conversion data).
-4. UNIFIED PLAN:
-   - **Strategic Blueprint**: Write a detailed markdown strategy covering budget pacing logic, creative hook themes, average order value leverage, and post-launch decision trees.
-   - **Subtasks Roadmap**: Provide a sequential checklist of jobs the Worker needs to execute to achieve the blueprint. The Worker will autonomously choose the best tools to perform these jobs.
+## Conversation History & Previous Decisions:
+${historical_context || 'No conversation history.'}
 
-## Intent Classification & Output Format
-Is the user asking for a campaign strategy, OR are they just asking a general question (or providing a conversational follow-up)?
+## Intent Classification Rules:
+1. NEW_CAMPAIGN_REQUEST: The user is asking for a brand new campaign strategy, a full account audit, or a major strategic overhaul.
+2. CHALLENGE_DECISION: The user is asking "why" you recommended a specific thing in a previous message, or disagreeing with a specific tactic (e.g. "Why 1 campaign?", "I don't like UGC").
+3. GENERAL_QUESTION: The user is asking a basic definition, saying hello, or asking something unrelated to a campaign build.
 
-You MUST respond ONLY with a JSON object in this format (no markdown codeblock markers, no extraneous wrapper text):
+You MUST respond ONLY with a JSON object:
 {
-  "intent": "CAMPAIGN_STRATEGY" | "CONVERSATION",
-  "internal_monologue": "Write a natural, first-person narrative monologue reasoning about the user's request.",
-  "conversational_response": "(ONLY if intent is CONVERSATION) The direct, conversational answer to the user.",
-  "currency": "${businessProfile?.currency || 'PKR'}",
-  "is_total_wallet": true,
-  "strategic_blueprint": "(ONLY if intent is CAMPAIGN_STRATEGY) Deep markdown text containing step-by-step masterclass strategy including budget pacing, campaign structure, creative hooks, offer advice, and post-launch rules",
-  "subtasks": ["(ONLY if intent is CAMPAIGN_STRATEGY) Subtask 1", "Subtask 2"],
-  "key_questions": ["What exact product or niche are you selling?", "Is your Meta Pixel active?"]
+  "intent": "NEW_CAMPAIGN_REQUEST" | "CHALLENGE_DECISION" | "GENERAL_QUESTION",
+  "internal_monologue": "First-person narrative thought on what the user wants.",
+  "conversational_response": "(ONLY if intent is GENERAL_QUESTION) Direct answer.",
+  "challenged_decision_explanation": "(ONLY if intent is CHALLENGE_DECISION) Explain the rationale based on conversation history without regenerating a full plan.",
+  "strategic_blueprint": "(ONLY if intent is NEW_CAMPAIGN_REQUEST) Detailed masterclass strategy blueprint.",
+  "subtasks": ["(ONLY if intent is NEW_CAMPAIGN_REQUEST) Subtask 1", "Subtask 2"],
+  "currency": "${businessProfile?.currency || 'PKR'}"
 }`;
+}
+
+function generatePreExecutionPlanReviewerPrompt(businessProfile: any) {
+  let profileContext = businessProfile ? `Business: ${businessProfile.business_name} (${businessProfile.country})` : '';
+  return `You are the Pre-Execution Planning Reviewer.
+Your job is to audit the Intent Router's blueprint BEFORE any research or execution starts:
+- Validate if the plan's overall logic, budget pacing, and subtask roadmap are sound.
+- If the plan is flawed or missed a critical dimension, mark "FAIL" and provide a corrected blueprint.
+${profileContext}
+
+Respond ONLY with a JSON object:
+{
+  "verdict": "PASS" | "FAIL",
+  "internal_thought": "Write 1 paragraph evaluating the blueprint quality",
+  "corrected_blueprint": "Detailed corrected blueprint if verdict is FAIL, or empty string if PASS"
+}`;
+}
+
+function generateResearchAgentPrompt(businessProfile: any) {
+  return `You are the Research & Evidence Gathering Agent (Blackboard Contributor).
+Your sole job is to evaluate assigned subtasks and use your available tools to gather empirical data and evidence.
+Do NOT write final user recommendations. Simply query tools to collect metrics and active campaign structures.`;
+}
+
+function generateCentralThinkingLoopPrompt(businessProfile: any) {
+  return `You are the Central Thinking Engine (The Living Belief Engine).
+Your job is to reason deeply over all accumulated Knowledge, Evidence, and Expert Contributions on the Blackboard, and form a stable set of Beliefs and Decisions.
+Do NOT output a conversational response. You must output a structured JSON mental model of what the system believes is the best strategy.
+
+Respond ONLY with a JSON object:
+{
+  "beliefs": [
+    { "claim": "State a core strategic belief", "confidence": 95, "rationale": "Reasoning based on evidence/experts" }
+  ],
+  "assumptions": ["List any assumptions being made"],
+  "unknowns": ["List critical missing data points"],
+  "decision_history": [
+    { "decision": "The final decision", "reason": "Why it was chosen", "confidence": 95, "alternatives_considered": ["Alternative 1"], "why_rejected": "Why it was not chosen" }
+  ],
+  "core_strategy": "The detailed master strategy synthesized from all beliefs, ready for execution."
+}`;
+}
+
+function generateResponseGeneratorPrompt(businessProfile: any) {
+  return `You are the Response Generator & Execution Worker.
+Your job is to read the Central Thinking Engine's Beliefs & Decisions, and translate them into a natural, conversational response to the user.
+If the Central Thinking Engine's core_strategy requires building a campaign on Meta, use your tools (create_campaign, create_ad_set, create_ad) to execute it.
+Do NOT rethink the strategy. Your job is communication and execution based ONLY on the provided beliefs.
+Format the output beautifully using Markdown.`;
 }
 
 function generateStrategyReviewerPrompt(businessProfile: any) {
   let profileContext = businessProfile ? `Business: ${businessProfile.business_name} (${businessProfile.country})` : '';
   return `You are the Chief Strategy Officer Reviewer.
 Your job is to audit the response for holistic strategy depth and actionable intelligence:
-- FAIL if the response is generic, relies on rigid templates, or lacks a clear campaign architecture, offer advice, and target audience alignment.
-- PASS ONLY if the response provides a masterclass strategic breakdown tailored to the business.
+- FAIL if the response is generic, relies on rigid templates, or lacks a clear campaign architecture.
+- PASS ONLY if the response provides a masterclass strategic breakdown.
+- CONSTRUCTIVE ALTERNATIVE: You MUST provide a concrete alternative strategic direction or improvement that would make this campaign 10x better.
 ${profileContext}
 
 Respond ONLY with a JSON object:
 {
   "verdict": "PASS" | "FAIL",
   "internal_thought": "Write 1-2 paragraphs of natural, first-person narrative thought evaluating this strategy",
-  "feedback": "Detailed explanation of strategic improvements needed if verdict is FAIL"
+  "feedback": "Detailed explanation of strategic improvements needed if verdict is FAIL",
+  "alternative_recommendation": "Constructive alternative strategy or specific improvement idea"
 }`;
 }
 
 function generateCopyReviewerPrompt(businessProfile: any) {
   return `You are the Lead Copywriting Reviewer.
-Your job is to audit the copywriting suggestions, ad copy hooks, and primary texts:
-- FAIL if the copy is dry, standard AI-sounding ("Unleash your potential", "Are you tired of X?"), or lacks emotional hooks.
-- PASS if the copywriting proposals use modern marketing hooks (like problem-agitation-solution, hook-story-offer) tailored to target avatar desires.
+Your job is to audit copywriting suggestions, ad copy hooks, and primary texts:
+- FAIL if the copy is dry or standard AI-sounding.
+- CONSTRUCTIVE ALTERNATIVE: You MUST provide a concrete alternative copy hook framework or angle.
 
 Respond ONLY with a JSON object:
 {
   "verdict": "PASS" | "FAIL",
   "internal_thought": "Write 1-2 paragraphs of natural, first-person narrative thought evaluating the copy quality",
-  "feedback": "Detailed explanation of copy improvements needed if verdict is FAIL"
+  "feedback": "Detailed explanation of copy improvements needed if verdict is FAIL",
+  "alternative_recommendation": "Constructive copy hook or angle recommendation"
 }`;
 }
 
 function generateCreativeReviewerPrompt(businessProfile: any) {
   return `You are the Creative Director Reviewer.
 Your job is to audit visual layout proposals, image/video suggestions, and creative hooks:
-- FAIL if the suggestions are vague ("use a high quality photo") or lack actionable details for a designer.
-- PASS if the creative suggestions describe exact visual hooks, video pacing, overlay texts, and CTA styles.
+- CONSTRUCTIVE ALTERNATIVE: You MUST provide a concrete alternative visual layout, pacing, or format recommendation.
 
 Respond ONLY with a JSON object:
 {
   "verdict": "PASS" | "FAIL",
   "internal_thought": "Write 1-2 paragraphs of natural, first-person narrative thought evaluating the creative proposals",
-  "feedback": "Detailed explanation of creative improvements needed if verdict is FAIL"
+  "feedback": "Detailed explanation of creative improvements needed if verdict is FAIL",
+  "alternative_recommendation": "Constructive visual layout or format recommendation"
 }`;
 }
 
 function generateDiversityReviewerPrompt(businessProfile: any) {
   let budgetCap = businessProfile?.monthly_ad_budget ? `${businessProfile.monthly_ad_budget} ${businessProfile.currency || 'USD'}` : 'Not provided';
   return `You are the Creative Diversity Auditor.
-Your job is to contextually audit the diversity of ad angles, hooks, and formats:
-- evaluate contextually based on budget scale. The user's monthly budget cap is: ${budgetCap}.
-- DO NOT be dogmatically biased. If the budget is very small (e.g. under 5,000 PKR / $50 USD total), do NOT fail the plan for having only a couple of simple static ad angles.
-- If the budget is healthy, check if there is a mix of formats (e.g. UGC vs Carousel vs Static Image) or angles to prevent creative fatigue.
-- FAIL only if there is a massive misalignment where a high budget runs redundant/copied ads, or if the angles proposed are completely repetitive. Otherwise PASS with constructive feedback.
+Your job is to contextually audit the diversity of ad angles, hooks, and formats based on budget scale (Cap: ${budgetCap}).
+- CONSTRUCTIVE ALTERNATIVE: Offer a constructive recommendation for creative format balance.
 
 Respond ONLY with a JSON object:
 {
   "verdict": "PASS" | "FAIL",
   "internal_thought": "Write 1-2 paragraphs of natural, first-person narrative thought evaluating the creative diversity contextually",
-  "feedback": "Detailed explanation of creative diversity improvements needed if verdict is FAIL"
+  "feedback": "Detailed explanation of creative diversity improvements needed if verdict is FAIL",
+  "alternative_recommendation": "Constructive creative diversity recommendation"
 }`;
 }
 
 function generateComplianceReviewerPrompt(businessProfile: any) {
   return `You are the Technical Operations & Compliance Auditor.
-Your job is to audit tool execution, compliance with Meta policies, and operational safety:
-- Ensure the agent does not force-create campaigns on Meta if the user only asked for strategic advice.
-- Ensure the agent respects temporal discipline rules (e.g. no modifying campaigns in learning phase).
-- Ensure no Meta policy compliance warnings (no misleading claims, forbidden words).
+Audit tool execution, compliance with Meta policies, and operational safety.
+- CONSTRUCTIVE ALTERNATIVE: Offer a constructive policy/safety safeguard recommendation.
 
 Respond ONLY with a JSON object:
 {
   "verdict": "PASS" | "FAIL",
   "internal_thought": "Write 1-2 paragraphs of natural, first-person narrative thought evaluating execution safety and policy compliance",
-  "feedback": "Detailed explanation of compliance or tool safety failures if verdict is FAIL"
+  "feedback": "Detailed explanation of compliance or tool safety failures if verdict is FAIL",
+  "alternative_recommendation": "Constructive policy/safety safeguard recommendation"
 }`;
 }
 
 function generatePerformanceReviewerPrompt(businessProfile: any) {
   let currency = businessProfile?.currency || 'PKR';
   return `You are the VP of Finance & Growth Reviewer.
-Your job is to audit budget pacing, expected ROAS, and performance metrics:
-- FAIL if the agent converted local currency (${currency}) without authorization or proposed mathematically illiterate budget pacing.
-- TIMELINE & PACING:
-  - If the user explicitly asked to run for a specific number of days, you MUST respect that constraint and evaluate performance pacing relative to that timeline. Do NOT fail the plan for running short-term if the user explicitly commanded it.
-  - If the user did NOT specify a timeline, verify if the budget pacing recommends a testing window of 4+ days. Proposing a 1-2 day test on an open-ended request is economically illiterate for Meta's learning algorithms—FAIL the plan in this scenario and instruct the worker to extend the test window.
-- PASS if the budget pacing, estimated ROAS, and customer acquisition metrics make complete growth sense.
+Audit budget pacing, currency integrity (${currency}), and expected ROAS economics.
+- CONSTRUCTIVE ALTERNATIVE: Offer a constructive financial pacing or allocation recommendation.
 
 Respond ONLY with a JSON object:
 {
   "verdict": "PASS" | "FAIL",
   "internal_thought": "Write 1-2 paragraphs of natural, first-person narrative thought evaluating the budget and performance expectations",
-  "feedback": "Detailed explanation of financial pacing improvements needed if verdict is FAIL"
+  "feedback": "Detailed explanation of financial pacing improvements needed if verdict is FAIL",
+  "alternative_recommendation": "Constructive budget pacing or financial recommendation"
 }`;
 }
 
@@ -1224,8 +1259,8 @@ serve(async (req) => {
         ? `## MARKETING INTELLIGENCE CONTEXT (Retrieved Frameworks)\nThe following are universal marketing frameworks retrieved based on the user's context. Use these as reference material to inform your strategic blueprint — they are principles, not commands.\n\n${knowledgeContext}\n\n## CLASSIFIED DIMENSIONS\n- Budget Tier: ${dimensions.budget_tier}${dimensions.extracted_budget ? ` (${dimensions.extracted_budget.amount} ${dimensions.extracted_budget.currency} ≈ $${dimensions.extracted_budget.usd_equivalent} USD)` : ''}\n- Market Type: ${dimensions.market_type}\n- User Intent: ${dimensions.intent_types.join(', ')}\n- Campaign Stage: ${dimensions.campaign_stage}\n- Industry: ${dimensions.industry}\n\n## USER REQUEST\n${prompt}`
         : prompt
 
-      // ===== PHASE 1: Strategic Planner =====
-      thinkingSteps.push('[Planning] Strategic planner analyzing requirements with knowledge context...')
+      // ===== PHASE 1: Intent Router & Blackboard Initiator =====
+      thinkingSteps.push('🧭 Intent Router classifying user request & retrieving past decisions...')
       
       let planJson: any = null
       try {
@@ -1237,7 +1272,7 @@ serve(async (req) => {
             model: reqDetails.model,
             max_tokens: maxTokens,
             messages: [
-              { role: 'system', content: generatePlannerPrompt(businessProfile, historical_context) },
+              { role: 'system', content: generateIntentRouterPrompt(businessProfile, historical_context) },
               { role: 'user', content: plannerUserMessage }
             ]
           })
@@ -1250,201 +1285,99 @@ serve(async (req) => {
         planJson = JSON.parse(cleanContent)
         
         if (planJson.internal_monologue) {
-          thinkingSteps.push(`💭 Strategic Planner Monologue:\n"${planJson.internal_monologue}"`)
-        } else {
-          thinkingSteps.push(`💭 Strategic Planner Monologue:\n"Analyzing budget scale: Calculating dynamic budget pacing and optimal account structure in ${planJson.currency || 'PKR'}. Formulating growth strategy."`)
+          thinkingSteps.push(`💭 Intent Router Thought:\n"${planJson.internal_monologue}"`)
         }
       } catch (err: any) {
-        console.error('Planner phase failed, using fallback:', err.message)
-        thinkingSteps.push('[Planning] Strategic planner phase encountered an error. Proceeding with fallback plan.')
+        console.error('Intent Router phase failed, using fallback:', err.message)
+        thinkingSteps.push('🧭 Intent Router encountered an error. Proceeding with fallback NEW_CAMPAIGN_REQUEST.')
         planJson = {
+          intent: 'NEW_CAMPAIGN_REQUEST',
           currency: businessProfile?.currency || 'PKR',
-          strategic_blueprint: "Standard growth strategy: Campaign (Sales), Ad Sets, Ad Creatives matched to user budget scale.",
-          subtasks: ["Understand budget constraints", "Analyze competitors", "Design standard growth campaign"],
-          key_questions: ["What exact product are you selling?"]
+          strategic_blueprint: "Standard growth strategy setup.",
+          subtasks: ["Understand budget constraints", "Analyze competitors", "Design standard growth campaign"]
         }
       }
 
-      // Phase 2: Worker OODA Loop
-      if (planJson.intent === 'CONVERSATION') {
-        thinkingSteps.push('💬 Conversational intent detected. Bypassing strategic deep dive.')
+      // ===== CONVERSATIONAL BYPASS & DECISION LOOKUP =====
+      if (planJson.intent === 'GENERAL_QUESTION') {
+        thinkingSteps.push('💬 General conversational intent detected. Bypassing strategic deep dive.')
         finalContent = planJson.conversational_response || "I'm here to help. Could you clarify what you mean?"
+      } else if (planJson.intent === 'CHALLENGE_DECISION') {
+        thinkingSteps.push('🔍 User challenging a previous decision. Looking up decision history & answering instantly...')
+        finalContent = planJson.challenged_decision_explanation || "Based on our previous reasoning, this was the optimal path. Let me know if you want to adjust the constraints."
       } else {
-        thinkingSteps.push('⚙️ Executing Worker loop guided by Unified Roadmap & Blueprint...')
-        const workerSystemPrompt = generateSystemPrompt(businessProfile, historical_context) +
-        `\n\n## MASTERCLASS STRATEGIC BLUEPRINT:\n${planJson.strategic_blueprint || ''}\n\n## ASSIGNED SUBTASKS:\n${JSON.stringify(planJson.subtasks || [], null, 2)}\n\nINSTRUCTIONS FOR YOUR RESPONSE:
-1. Deliver a comprehensive, deeply practical response that reads like an elite Growth Marketer / Chief Marketing Officer.
-2. NEVER convert local currency without user authorization. Use the exact currency specified (${planJson.currency || 'PKR'}).
-3. Use your tools autonomously to execute the assigned subtasks, referencing the Strategic Blueprint for key constraints (like budget pacing, creative angles, or offer tweaks).
-4. Detail dynamic budget pacing matched to the user's specific scale (whether a lean test or a multi-week scale push), campaign structure, offer strategy, creative variations, post-launch rules, and ask a clarifying question.`;
-
-      const workerMessages: any[] = [
-        { role: 'system', content: workerSystemPrompt },
-        ...history
-      ]
-
-      const MAX_ITERATIONS = 6
-      for (let i = 0; i < MAX_ITERATIONS; i++) {
-        thinkingSteps.push(`⚙️ Worker Step ${i + 1}: Consulting context and tools...`)
-
-        const reqDetails = getLLMRequestDetails(openRouterKey, model)
-        const workerRes = await fetch(reqDetails.url, {
-          method: 'POST',
-          headers: reqDetails.headers,
-          body: JSON.stringify({
-            model: reqDetails.model,
-            max_tokens: maxTokens,
-            messages: workerMessages,
-            tools: AGENT_TOOLS,
-            tool_choice: 'auto'
-          })
-        })
-
-        if (!workerRes.ok) throw new Error('Worker OpenRouter Error: ' + await workerRes.text())
-
-        const aiData = await workerRes.json()
-        const assistantMessage = aiData.choices[0].message
-        workerMessages.push(assistantMessage)
-
-        if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
-          for (const toolCall of assistantMessage.tool_calls) {
-            const toolName = toolCall.function.name
-            let toolArgs = {}
-            try { toolArgs = JSON.parse(toolCall.function.arguments || '{}') } catch {}
-
-            thinkingSteps.push('🛠️ Executing Tool: ' + toolName)
-
-            const toolResult = await executeTool(
-              toolName,
-              toolArgs,
-              supabaseClient,
-              user.id,
-              session_id,
-              !!is_background,
-              settings?.meta_access_token || undefined,
-              settings?.meta_ad_account_id || undefined
-            )
-
-            try {
-              const parsed = JSON.parse(toolResult)
-              if (parsed.type === 'PROPOSAL' || parsed.type === 'GOAL_PROPOSAL') proposals.push(parsed)
-            } catch {}
-
-            toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult.substring(0, 500), status: 'success' })
-            workerMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResult })
-          }
-        } else {
-          finalContent = assistantMessage.content || ''
-          thinkingSteps.push('📝 Draft growth plan compiled.')
-          break
+        // Shared Working Memory (The Living Mental Model)
+        const conversationBrain: any = {
+          goal: prompt,
+          classified_dimensions: dimensions,
+          currency: planJson.currency || businessProfile?.currency || 'PKR',
+          planner_blueprint: planJson.strategic_blueprint,
+          subtasks: planJson.subtasks || [],
+          evidence: [],
+          expert_contributions: [],
+          beliefs: [],
+          assumptions: [],
+          unknowns: [],
+          decision_history: [],
+          core_strategy: ''
         }
-      }
 
-      // Phase 3 & 4: Reviewers & Synthesizer quality gate
-      thinkingSteps.push('📋 Convening Senior Growth Advisory Committee...')
-      const reviewerModel = model // Use the user's primary selected model for reviewer quality gate
-      
-      const reviewerConfigs = [
-        { id: 'strategy', label: '🎯 Strategy & Targeting Reviewer', promptFn: generateStrategyReviewerPrompt },
-        { id: 'copy', label: '✍️ Lead Copywriting Reviewer', promptFn: generateCopyReviewerPrompt },
-        { id: 'creative', label: '🎨 Creative Director Reviewer', promptFn: generateCreativeReviewerPrompt },
-        { id: 'diversity', label: '🎭 Creative Diversity Auditor', promptFn: generateDiversityReviewerPrompt },
-        { id: 'compliance', label: '🛡️ Risk & Compliance Auditor', promptFn: generateComplianceReviewerPrompt },
-        { id: 'performance', label: '📊 Finance & Performance Reviewer', promptFn: generatePerformanceReviewerPrompt }
-      ]
-
-      const reviewerPromises = reviewerConfigs.map(async (config) => {
+        // ===== PHASE 1.5: Pre-Execution Plan Reviewer =====
+        thinkingSteps.push('🛡️ Pre-Execution: Planning Reviewer auditing strategic blueprint before research...')
         try {
-          const reqDetails = getLLMRequestDetails(openRouterKey, reviewerModel)
-          const reviewerRes = await fetch(reqDetails.url, {
+          const reqDetails = getLLMRequestDetails(openRouterKey, model)
+          const planReviewRes = await fetch(reqDetails.url, {
             method: 'POST',
             headers: reqDetails.headers,
             body: JSON.stringify({
               model: reqDetails.model,
               max_tokens: reviewerMaxTokens,
               messages: [
-                { role: 'system', content: config.promptFn(businessProfile) },
-                { role: 'user', content: `Original request: ${prompt}\nPlanner Plan: ${JSON.stringify(planJson)}\nWorker Tools Executed: ${JSON.stringify(toolExecutions)}\nWorker Draft Response: ${finalContent}` }
+                { role: 'system', content: generatePreExecutionPlanReviewerPrompt(businessProfile) },
+                { role: 'user', content: `Blueprint to audit: ${planJson.strategic_blueprint}\nSubtasks: ${JSON.stringify(planJson.subtasks)}` }
               ]
             })
           })
-          if (!reviewerRes.ok) throw new Error(await reviewerRes.text())
-          const data = await reviewerRes.json()
-          const clean = (data.choices[0].message.content || '{}').replace(/```json/g, '').replace(/```/g, '').trim()
-          return { role: config.id, label: config.label, ...JSON.parse(clean) }
+          if (planReviewRes.ok) {
+            const data = await planReviewRes.json()
+            const clean = (data.choices[0].message.content || '{}').replace(/```json/g, '').replace(/```/g, '').trim()
+            const parsed = JSON.parse(clean)
+            if (parsed.verdict === 'FAIL' && parsed.corrected_blueprint) {
+              conversationBrain.planner_blueprint = parsed.corrected_blueprint
+              thinkingSteps.push('🛡️ Pre-Execution Plan Reviewer: Flaws detected. Upgraded blueprint before research.')
+            } else {
+              thinkingSteps.push('🛡️ Pre-Execution Plan Reviewer: Blueprint validated (PASS).')
+            }
+          }
         } catch (err: any) {
-          console.error(`Reviewer ${config.id} failed:`, err.message)
-          return { role: config.id, label: config.label, verdict: 'PASS', internal_thought: 'Verified basic constraints.', feedback: 'Skipped due to transient error.' }
+          console.error('Pre-execution plan reviewer error:', err.message)
         }
-      })
 
-      const reviews = await Promise.all(reviewerPromises)
-      for (const r of reviews) {
-        if (r.internal_thought) {
-          thinkingSteps.push(`${r.label} Thought:\n"${r.internal_thought}"`);
-        } else {
-          thinkingSteps.push(`${r.label} (${r.verdict}): "${r.feedback || 'Strategy validated.'}"`);
-        }
-      }
+        // ===== PHASE 2: Research Agent (Evidence Gathering) =====
+        thinkingSteps.push('🔬 Phase 2: Research Agent gathering evidence and live ad account metrics...')
+        const researchMessages: any[] = [
+          { role: 'system', content: generateResearchAgentPrompt(businessProfile) + `\n\nSUBTASKS TO RESEARCH:\n${JSON.stringify(conversationBrain.subtasks)}` },
+          ...history
+        ]
 
-      // Synthesizer
-      let synthJson = { all_passed: true, internal_thought: '', actionable_feedback: '' }
-      try {
-        const reqDetails = getLLMRequestDetails(openRouterKey, reviewerModel)
-        const synthRes = await fetch(reqDetails.url, {
-          method: 'POST',
-          headers: reqDetails.headers,
-          body: JSON.stringify({
-            model: reqDetails.model,
-            max_tokens: reviewerMaxTokens,
-            messages: [
-              { role: 'system', content: generateSynthesizerPrompt(businessProfile) },
-              { role: 'user', content: `Original request: ${prompt}\nWorker Draft Response: ${finalContent}\nReviewer Feedback: ${JSON.stringify(reviews)}` }
-            ]
-          })
-        })
-        if (synthRes.ok) {
-          const data = await synthRes.json()
-          const clean = (data.choices[0].message.content || '{}').replace(/```json/g, '').replace(/```/g, '').trim()
-          synthJson = JSON.parse(clean)
-        }
-      } catch (err: any) {
-        console.error('Synthesizer failed:', err.message)
-      }
-
-      // Check Quality Gate
-      if (!synthJson.all_passed) {
-        thinkingSteps.push(`🔄 Quality Gate Feedback:\n"${synthJson.actionable_feedback || 'Refining details for higher strategic precision.'}"`)
-        thinkingSteps.push('🔄 Re-running Worker for final strategic refinement...')
-
-        // Inject synthesizer feedback as a user prompt revision
-        workerMessages.push({
-          role: 'user',
-          content: `CRITICAL QUALITY REJECTED: Your response or action failed the audit review. Adjust it according to this feedback:\n${synthJson.actionable_feedback}\n\nMake sure to run correct tools or fix parameters. Produce your final revised response.`
-        })
-
-        // Run worker loop once more, up to 3 steps
-        for (let i = 0; i < 3; i++) {
-          thinkingSteps.push('[Revision] Worker Iteration ' + (i + 1) + ': Refining response...')
-
+        for (let i = 0; i < 4; i++) {
           const reqDetails = getLLMRequestDetails(openRouterKey, model)
-          const revisionRes = await fetch(reqDetails.url, {
+          const researchRes = await fetch(reqDetails.url, {
             method: 'POST',
             headers: reqDetails.headers,
             body: JSON.stringify({
               model: reqDetails.model,
               max_tokens: maxTokens,
-              messages: workerMessages,
+              messages: researchMessages,
               tools: AGENT_TOOLS,
               tool_choice: 'auto'
             })
           })
 
-          if (!revisionRes.ok) break
-
-          const aiData = await revisionRes.json()
+          if (!researchRes.ok) break
+          const aiData = await researchRes.json()
           const assistantMessage = aiData.choices[0].message
-          workerMessages.push(assistantMessage)
+          researchMessages.push(assistantMessage)
 
           if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
             for (const toolCall of assistantMessage.tool_calls) {
@@ -1452,8 +1385,7 @@ serve(async (req) => {
               let toolArgs = {}
               try { toolArgs = JSON.parse(toolCall.function.arguments || '{}') } catch {}
 
-              thinkingSteps.push('[Revision] Executing Tool: ' + toolName)
-
+              thinkingSteps.push('🛠️ Research Tool Executed: ' + toolName)
               const toolResult = await executeTool(
                 toolName,
                 toolArgs,
@@ -1471,71 +1403,177 @@ serve(async (req) => {
               } catch {}
 
               toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult.substring(0, 500), status: 'success' })
-              workerMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResult })
+              conversationBrain.evidence.push({ tool: toolName, args: toolArgs, result: toolResult.substring(0, 500) })
+              researchMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResult })
             }
           } else {
-            finalContent = assistantMessage.content || ''
             break
           }
         }
-        thinkingSteps.push('✅ Final Strategy Refined: All reviewer feedback incorporated. Finalizing response.')
-      } else {
-        thinkingSteps.push(`✅ Quality Gate Consensus: ${synthJson.internal_thought || 'All strategic perspectives validated the plan without objection. Strategy ready.'}`)
-      }
+        thinkingSteps.push(`🔬 Research Agent compiled ${conversationBrain.evidence.length} evidence data points into Shared Memory.`)
 
-      // Phase 10: Plan Reviewer (Critiques the planning process)
-      thinkingSteps.push('📋 Conducting post-process planning critique...')
-      try {
-        const reqDetails = getLLMRequestDetails(openRouterKey, model)
-        const planReviewRes = await fetch(reqDetails.url, {
-          method: 'POST',
-          headers: reqDetails.headers,
-          body: JSON.stringify({
-            model: reqDetails.model,
-            max_tokens: reviewerMaxTokens,
-            messages: [
-              { role: 'system', content: generatePlanReviewerPrompt(businessProfile) },
-              { role: 'user', content: `Planner Subtasks: ${JSON.stringify(planJson.subtasks)}\nWorker Tools Executed: ${JSON.stringify(toolExecutions)}\nFinal Draft: ${finalContent}` }
-            ]
-          })
+        // ===== PHASE 3: Board of Constructive Expert Debaters =====
+        thinkingSteps.push('📋 Phase 3: Board of Experts contributing alternative angles to the Blackboard...')
+        const reviewerConfigs = [
+          { id: 'strategy', label: '🎯 CSO Strategy Expert', promptFn: generateStrategyReviewerPrompt },
+          { id: 'copy', label: '✍️ Lead Copywriting Expert', promptFn: generateCopyReviewerPrompt },
+          { id: 'creative', label: '🎨 Creative Director Expert', promptFn: generateCreativeReviewerPrompt },
+          { id: 'diversity', label: '🎭 Creative Diversity Auditor', promptFn: generateDiversityReviewerPrompt },
+          { id: 'compliance', label: '🛡️ Operations & Policy Auditor', promptFn: generateComplianceReviewerPrompt },
+          { id: 'performance', label: '📊 Finance & Performance Expert', promptFn: generatePerformanceReviewerPrompt }
+        ]
+
+        const reviewerPromises = reviewerConfigs.map(async (config) => {
+          try {
+            const reqDetails = getLLMRequestDetails(openRouterKey, model)
+            const reviewerRes = await fetch(reqDetails.url, {
+              method: 'POST',
+              headers: reqDetails.headers,
+              body: JSON.stringify({
+                model: reqDetails.model,
+                max_tokens: reviewerMaxTokens,
+                messages: [
+                  { role: 'system', content: config.promptFn(businessProfile) },
+                  { role: 'user', content: `Original Blueprint: ${conversationBrain.planner_blueprint}\nResearch Evidence: ${JSON.stringify(conversationBrain.evidence)}` }
+                ]
+              })
+            })
+            if (!reviewerRes.ok) throw new Error(await reviewerRes.text())
+            const data = await reviewerRes.json()
+            const clean = (data.choices[0].message.content || '{}').replace(/```json/g, '').replace(/```/g, '').trim()
+            const parsed = JSON.parse(clean)
+            return { role: config.id, label: config.label, ...parsed }
+          } catch (err: any) {
+            return { role: config.id, label: config.label, verdict: 'PASS', internal_thought: 'No objection.', alternative_recommendation: '' }
+          }
         })
-        if (planReviewRes.ok) {
-          const data = await planReviewRes.json()
-          const clean = (data.choices[0].message.content || '{}').replace(/```json/g, '').replace(/```/g, '').trim()
-          const parsed = JSON.parse(clean)
-          if (parsed.critique) {
-            thinkingSteps.push(`📋 Plan Reviewer Critique:\n"${parsed.critique}"\n*Lessons Learned:* "${parsed.lessons_learned || ''}"`)
+
+        const reviews = await Promise.all(reviewerPromises)
+        for (const r of reviews) {
+          if (r.alternative_recommendation) {
+            conversationBrain.expert_contributions.push({ expert: r.label, verdict: r.verdict, thought: r.internal_thought, recommendation: r.alternative_recommendation })
+            thinkingSteps.push(`${r.label} added to Blackboard: "${r.alternative_recommendation}"`)
           }
         }
-      } catch (err: any) {
-        console.error('Plan Reviewer failed:', err.message)
-      }
 
-      // Phase 11: Formatter
-      thinkingSteps.push('✍️ Formatting finalized ad strategy layout...')
-      try {
-        const reqDetails = getLLMRequestDetails(openRouterKey, model)
-        const formatterRes = await fetch(reqDetails.url, {
+        // ===== PHASE 4: Central Thinking Loop (The Living Belief Engine) =====
+        thinkingSteps.push('🧠 Phase 4: Central Thinking Engine synthesizing all inputs into stable Beliefs...')
+        try {
+          const reqDetails = getLLMRequestDetails(openRouterKey, model)
+          const strategyRes = await fetch(reqDetails.url, {
+            method: 'POST',
+            headers: reqDetails.headers,
+            body: JSON.stringify({
+              model: reqDetails.model,
+              max_tokens: maxTokens,
+              messages: [
+                { role: 'system', content: generateCentralThinkingLoopPrompt(businessProfile) },
+                { role: 'user', content: `## BLACKBOARD STATE:\n- User Goal: ${prompt}\n- Validated Blueprint: ${conversationBrain.planner_blueprint}\n- Classified Dimensions: ${JSON.stringify(conversationBrain.classified_dimensions)}\n- Gathered Research Evidence:\n${JSON.stringify(conversationBrain.evidence, null, 2)}\n- Expert Contributions:\n${JSON.stringify(conversationBrain.expert_contributions, null, 2)}\n\nFormulate the system's core Beliefs, Assumptions, and final Core Strategy.` }
+              ]
+            })
+          })
+          if (strategyRes.ok) {
+            const data = await strategyRes.json()
+            const clean = (data.choices[0].message.content || '{}').replace(/```json/g, '').replace(/```/g, '').trim()
+            const parsed = JSON.parse(clean)
+            
+            conversationBrain.beliefs = parsed.beliefs || []
+            conversationBrain.assumptions = parsed.assumptions || []
+            conversationBrain.unknowns = parsed.unknowns || []
+            conversationBrain.decision_history = parsed.decision_history || []
+            conversationBrain.core_strategy = parsed.core_strategy || conversationBrain.planner_blueprint
+            
+            thinkingSteps.push(`🧠 Central Thinking Engine stabilized ${conversationBrain.beliefs.length} core beliefs with high confidence.`)
+            
+            // Log decision history to UI
+            for (const dec of conversationBrain.decision_history) {
+              thinkingSteps.push(`⚖️ Decision: ${dec.decision} (Confidence: ${dec.confidence}%)\n   Rationale: ${dec.reason}\n   Rejected: ${dec.alternatives_considered.join(', ')} (${dec.why_rejected})`)
+            }
+          }
+        } catch (err: any) {
+          console.error('Central Thinking Engine failed:', err.message)
+          conversationBrain.core_strategy = conversationBrain.planner_blueprint
+        }
+
+        // ===== PHASE 5: Response Generator & Execution Worker =====
+        thinkingSteps.push('⚡ Phase 5: Response Agent generating output from finalized Beliefs...')
+        const responseWorkerPrompt = generateResponseGeneratorPrompt(businessProfile) +
+          `\n\n## STABILIZED MENTAL MODEL (BELIEFS):\n` +
+          `- Goal: ${prompt}\n` +
+          `- Core Beliefs:\n${JSON.stringify(conversationBrain.beliefs, null, 2)}\n\n` +
+          `- Decision History:\n${JSON.stringify(conversationBrain.decision_history, null, 2)}\n\n` +
+          `- Final Core Strategy Execution Plan:\n${conversationBrain.core_strategy}\n\n` +
+          `INSTRUCTIONS: Communicate these beliefs naturally to the user. Execute any required Meta tools now.`;
+
+        const responseMessages: any[] = [
+          { role: 'system', content: responseWorkerPrompt },
+          ...history
+        ]
+
+        const workerRes = await fetch(getLLMRequestDetails(openRouterKey, model).url, {
           method: 'POST',
-          headers: reqDetails.headers,
+          headers: getLLMRequestDetails(openRouterKey, model).headers,
           body: JSON.stringify({
-            model: reqDetails.model,
+            model: getLLMRequestDetails(openRouterKey, model).model,
             max_tokens: maxTokens,
-            messages: [
-              { role: 'system', content: generateFormatterPrompt() },
-              { role: 'user', content: `Structure and format this content beautifully:\n\n${finalContent}` }
-            ]
+            messages: responseMessages,
+            tools: AGENT_TOOLS,
+            tool_choice: 'auto'
           })
         })
-        if (formatterRes.ok) {
-          const data = await formatterRes.json()
-          finalContent = data.choices[0].message.content || finalContent
+
+        if (workerRes.ok) {
+          const aiData = await workerRes.json()
+          const assistantMsg = aiData.choices[0].message
+          finalContent = assistantMsg.content || ''
+          
+          if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0) {
+            for (const toolCall of assistantMsg.tool_calls) {
+              const toolName = toolCall.function.name
+              let toolArgs = {}
+              try { toolArgs = JSON.parse(toolCall.function.arguments || '{}') } catch {}
+              thinkingSteps.push('🛠️ Execution Tool Executed: ' + toolName)
+              const toolResult = await executeTool(
+                toolName,
+                toolArgs,
+                supabaseClient,
+                user.id,
+                session_id,
+                !!is_background,
+                settings?.meta_access_token || undefined,
+                settings?.meta_ad_account_id || undefined
+              )
+              toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult.substring(0, 500), status: 'success' })
+            }
+          }
+        } else {
+          finalContent = conversationBrain.core_strategy
         }
-      } catch (err: any) {
-        console.error('Formatter failed:', err.message)
-      }
-      
-      } // End of CAMPAIGN_STRATEGY else block
+
+        // ===== PHASE 6: Formatter =====
+        thinkingSteps.push('✍️ Formatting finalized ad strategy layout...')
+        try {
+          const reqDetails = getLLMRequestDetails(openRouterKey, model)
+          const formatterRes = await fetch(reqDetails.url, {
+            method: 'POST',
+            headers: reqDetails.headers,
+            body: JSON.stringify({
+              model: reqDetails.model,
+              max_tokens: maxTokens,
+              messages: [
+                { role: 'system', content: generateFormatterPrompt() },
+                { role: 'user', content: `Structure and format this content beautifully:\n\n${finalContent}` }
+              ]
+            })
+          })
+          if (formatterRes.ok) {
+            const data = await formatterRes.json()
+            finalContent = data.choices[0].message.content || finalContent
+          }
+        } catch (err: any) {
+          console.error('Formatter failed:', err.message)
+        }
+      } // End of CAMPAIGN_STRATEGY block
     } else {
       // Fast Mode (Default)
       thinkingSteps.push('Initializing Context-Aware OODA Loop...')
