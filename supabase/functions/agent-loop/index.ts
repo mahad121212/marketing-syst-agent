@@ -417,30 +417,41 @@ Do NOT write final user recommendations. Simply query tools to collect metrics a
 }
 
 function generateCentralThinkingLoopPrompt(businessProfile: any) {
-  return `You are the Central Thinking Engine (The Living Belief Engine).
-Your job is to reason deeply over all accumulated Knowledge, Evidence, and Expert Contributions on the Blackboard, and form a stable set of Beliefs and Decisions.
-Do NOT output a conversational response. You must output a structured JSON mental model of what the system believes is the best strategy.
+  return `You are the Central Strategy Reasoning Engine.
+Your sole job is REASONING-FIRST problem solving. Analyze the user's situation, gathered evidence, and expert inputs to solve their exact query.
+
+REASONING RULES:
+1. Reason before deciding: Explicitly record assumptions, unknowns, and trade-offs.
+2. Evaluate alternatives: Compare 2-3 approaches and document why alternatives were set aside.
+3. Problem-solving focus: Do NOT generate a generic 10-page marketing audit report. Focus purely on finding the optimal, practical solution for the user.
 
 Respond ONLY with a JSON object:
 {
   "beliefs": [
-    { "claim": "State a core strategic belief", "confidence": 95, "rationale": "Reasoning based on evidence/experts" }
+    { "claim": "State a core strategic belief", "confidence": 95, "rationale": "Reasoning based on evidence" }
   ],
-  "assumptions": ["List any assumptions being made"],
-  "unknowns": ["List critical missing data points"],
+  "assumptions": ["Key assumption 1", "Key assumption 2"],
+  "unknowns": ["Critical unknown 1"],
   "decision_history": [
-    { "decision": "The final decision", "reason": "Why it was chosen", "confidence": 95, "alternatives_considered": ["Alternative 1"], "why_rejected": "Why it was not chosen" }
+    { "decision": "Chosen tactic", "reason": "Why chosen", "confidence": 90, "alternatives_considered": ["Alternative 1", "Alternative 2"], "why_rejected": "Why alternatives were set aside" }
   ],
-  "core_strategy": "The detailed master strategy synthesized from all beliefs, ready for execution."
+  "core_strategy": "Concise, actionable strategic solution tailored specifically to the user's prompt."
 }`;
 }
 
 function generateResponseGeneratorPrompt(businessProfile: any) {
-  return `You are the Response Generator & Execution Worker.
-Your job is to read the Central Thinking Engine's Beliefs & Decisions, and translate them into a natural, conversational response to the user.
-If the Central Thinking Engine's core_strategy requires building a campaign on Meta, use your tools (create_campaign, create_ad_set, create_ad) to execute it.
-Do NOT rethink the strategy. Your job is communication and execution based ONLY on the provided beliefs.
-Format the output beautifully using Markdown.`;
+  let profileContext = businessProfile ? `Business: ${businessProfile.business_name} (${businessProfile.country})` : '';
+  return `You are MetaAgent AI, a senior growth strategist and media buyer pair-programming directly with the user.
+
+${profileContext}
+
+CONVERSATIONAL DIRECTION:
+1. Speak as ONE continuous, fluid conversational assistant (like chatting directly with a senior colleague).
+2. DO NOT format your output as a formal audit report, website article, or multi-section marketing document.
+3. Answer the user's specific question or address their exact objection directly, naturally, and warmly.
+4. Seamlessly incorporate your internal beliefs, assumptions, and decision rationale into your natural dialogue.
+5. If creating campaigns, ad sets, or ads is required, use your tools (create_campaign, create_ad_set, create_ad) to execute them.
+6. Keep the response concise, engaging, and conversational.`;
 }
 
 function generateStrategyReviewerPrompt(businessProfile: any) {
@@ -1556,34 +1567,7 @@ serve(async (req) => {
         if (!finalContent || finalContent.trim().length === 0) {
           finalContent = conversationBrain.core_strategy || conversationBrain.planner_blueprint || "Strategy successfully calculated."
         }
-
-        // ===== PHASE 6: Internal Formatter Service =====
-        thinkingSteps.push('✍️ Formatting finalized ad strategy layout...')
-        try {
-          const reqDetails = getLLMRequestDetails(openRouterKey, model)
-          const formatterRes = await fetch(reqDetails.url, {
-            method: 'POST',
-            headers: reqDetails.headers,
-            body: JSON.stringify({
-              model: reqDetails.model,
-              max_tokens: maxTokens,
-              messages: [
-                { role: 'system', content: generateFormatterPrompt() },
-                { role: 'user', content: `Structure and format this content beautifully:\n\n${finalContent}` }
-              ]
-            })
-          })
-          if (formatterRes.ok) {
-            const data = await formatterRes.json()
-            const formatted = data.choices[0]?.message?.content || ''
-            // Guardrail: Never allow Formatter to output a role-locked prompt request to the user
-            if (formatted && !formatted.toLowerCase().includes('please provide') && !formatted.toLowerCase().includes('paste the details')) {
-              finalContent = formatted
-            }
-          }
-        } catch (err: any) {
-          console.error('Formatter failed:', err.message)
-        }
+        thinkingSteps.push('💬 Response Generator finalized conversational answer.')
       } // End of CAMPAIGN_STRATEGY block
     } else {
       // Fast Mode (Default)
