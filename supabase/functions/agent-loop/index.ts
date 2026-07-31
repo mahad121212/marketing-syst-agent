@@ -1518,8 +1518,15 @@ serve(async (req) => {
               toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult.substring(0, 500), status: 'success' })
             }
           }
-        } else {
-          finalContent = conversationBrain.strategy_proposal
+        } 
+        
+        if (!finalContent || finalContent.trim().length === 0) {
+          finalContent = conversationBrain.strategy_proposal || conversationBrain.planner_blueprint || "Strategy successfully formulated."
+        }
+
+        if (toolExecutions.length > 0) {
+          const toolSummary = toolExecutions.map(t => `- **Executed ${t.name}**: ${t.result}`).join('\n')
+          finalContent += `\n\n### 🛠️ Execution & Action Summary\n${toolSummary}`
         }
 
         // ===== PHASE 6: Formatter =====
@@ -1540,7 +1547,10 @@ serve(async (req) => {
           })
           if (formatterRes.ok) {
             const data = await formatterRes.json()
-            finalContent = data.choices[0].message.content || finalContent
+            const formatted = data.choices[0].message.content || ''
+            if (formatted.trim().length > 20 && !formatted.includes("Please provide the content")) {
+              finalContent = formatted
+            }
           }
         } catch (err: any) {
           console.error('Formatter failed:', err.message)
