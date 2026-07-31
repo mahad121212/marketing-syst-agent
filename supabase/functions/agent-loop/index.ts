@@ -393,12 +393,12 @@ You MUST respond ONLY with a JSON object in this format (no markdown codeblock m
 }`;
 }
 
-function generateStrategyReviewerPrompt(businessProfile: any) {
+function generateStrategyReviewerPrompt(businessProfile: any, responseMode?: string) {
   let profileContext = businessProfile ? `Business: ${businessProfile.business_name} (${businessProfile.country})` : '';
   return `You are the Chief Strategy Officer Reviewer.
 Your job is to audit the response for holistic strategy depth and actionable intelligence:
-- FAIL if the response is generic, relies on rigid templates, or lacks a clear campaign architecture, offer advice, and target audience alignment.
-- PASS ONLY if the response provides a masterclass strategic breakdown tailored to the business.
+- If the response mode is CONVERSATIONAL_QA, PASS if the agent directly and accurately answers the user's specific question or challenge. Do NOT fail it for lacking full campaign architecture.
+- If the response mode is FULL_STRATEGY, FAIL if the response is generic, relies on rigid templates, or lacks a clear campaign architecture, offer advice, and target audience alignment. PASS ONLY if the response provides a masterclass strategic breakdown.
 ${profileContext}
 
 Respond ONLY with a JSON object:
@@ -409,9 +409,10 @@ Respond ONLY with a JSON object:
 }`;
 }
 
-function generateCopyReviewerPrompt(businessProfile: any) {
+function generateCopyReviewerPrompt(businessProfile: any, responseMode?: string) {
   return `You are the Lead Copywriting Reviewer.
 Your job is to audit the copywriting suggestions, ad copy hooks, and primary texts:
+- If this is a CONVERSATIONAL_QA that doesn't involve copywriting, just PASS.
 - FAIL if the copy is dry, standard AI-sounding ("Unleash your potential", "Are you tired of X?"), or lacks emotional hooks.
 - PASS if the copywriting proposals use modern marketing hooks (like problem-agitation-solution, hook-story-offer) tailored to target avatar desires.
 
@@ -423,9 +424,10 @@ Respond ONLY with a JSON object:
 }`;
 }
 
-function generateCreativeReviewerPrompt(businessProfile: any) {
+function generateCreativeReviewerPrompt(businessProfile: any, responseMode?: string) {
   return `You are the Creative Director Reviewer.
 Your job is to audit visual layout proposals, image/video suggestions, and creative hooks:
+- If this is a CONVERSATIONAL_QA that doesn't involve creative suggestions, just PASS.
 - FAIL if the suggestions are vague ("use a high quality photo") or lack actionable details for a designer.
 - PASS if the creative suggestions describe exact visual hooks, video pacing, overlay texts, and CTA styles.
 
@@ -437,10 +439,11 @@ Respond ONLY with a JSON object:
 }`;
 }
 
-function generateDiversityReviewerPrompt(businessProfile: any) {
+function generateDiversityReviewerPrompt(businessProfile: any, responseMode?: string) {
   let budgetCap = businessProfile?.monthly_ad_budget ? `${businessProfile.monthly_ad_budget} ${businessProfile.currency || 'USD'}` : 'Not provided';
   return `You are the Creative Diversity Auditor.
 Your job is to contextually audit the diversity of ad angles, hooks, and formats:
+- If this is a CONVERSATIONAL_QA that doesn't involve ads, just PASS.
 - evaluate contextually based on budget scale. The user's monthly budget cap is: ${budgetCap}.
 - DO NOT be dogmatically biased. If the budget is very small (e.g. under 5,000 PKR / $50 USD total), do NOT fail the plan for having only a couple of simple static ad angles.
 - If the budget is healthy, check if there is a mix of formats (e.g. UGC vs Carousel vs Static Image) or angles to prevent creative fatigue.
@@ -454,7 +457,7 @@ Respond ONLY with a JSON object:
 }`;
 }
 
-function generateComplianceReviewerPrompt(businessProfile: any) {
+function generateComplianceReviewerPrompt(businessProfile: any, responseMode?: string) {
   return `You are the Technical Operations & Compliance Auditor.
 Your job is to audit tool execution, compliance with Meta policies, and operational safety:
 - Ensure the agent does not force-create campaigns on Meta if the user only asked for strategic advice.
@@ -469,10 +472,11 @@ Respond ONLY with a JSON object:
 }`;
 }
 
-function generatePerformanceReviewerPrompt(businessProfile: any) {
+function generatePerformanceReviewerPrompt(businessProfile: any, responseMode?: string) {
   let currency = businessProfile?.currency || 'PKR';
   return `You are the VP of Finance & Growth Reviewer.
 Your job is to audit budget pacing, expected ROAS, and performance metrics:
+- If this is a CONVERSATIONAL_QA that doesn't involve a new budget plan, just PASS.
 - FAIL if the agent converted local currency (${currency}) without authorization or proposed mathematically illiterate budget pacing.
 - TIMELINE & PACING:
   - If the user explicitly asked to run for a specific number of days, you MUST respect that constraint and evaluate performance pacing relative to that timeline. Do NOT fail the plan for running short-term if the user explicitly commanded it.
@@ -1268,12 +1272,24 @@ serve(async (req) => {
 
       // Phase 2: Worker OODA Loop
       thinkingSteps.push('⚙️ Executing Worker loop guided by Unified Roadmap & Blueprint...')
-      const workerSystemPrompt = generateSystemPrompt(businessProfile, historical_context) +
-        `\n\n## MASTERCLASS STRATEGIC BLUEPRINT:\n${planJson.strategic_blueprint || ''}\n\n## ASSIGNED SUBTASKS:\n${JSON.stringify(planJson.subtasks || [], null, 2)}\n\nINSTRUCTIONS FOR YOUR RESPONSE:
+      let workerInstructions = '';
+      if (dimensions.response_mode === 'CONVERSATIONAL_QA') {
+        workerInstructions = `INSTRUCTIONS FOR YOUR RESPONSE:
+1. The user has asked a question, requested a different perspective, or challenged a decision. You are in a CONVERSATION.
+2. ANSWER DIRECTLY AND CONCISELY. Do NOT output a massive 2-page campaign blueprint. Do NOT detail budget pacing, creative variations, or offer strategies unless the user explicitly requested them in this prompt.
+3. Use the Strategic Blueprint above as your reasoning guide, but format your output as a natural, conversational response addressing the user's exact input.
+4. NEVER convert local currency without user authorization. Use the exact currency specified (${planJson.currency || 'PKR'}).
+5. Use your tools autonomously ONLY if the assigned subtasks require execution.`;
+      } else {
+        workerInstructions = `INSTRUCTIONS FOR YOUR RESPONSE:
 1. Deliver a comprehensive, deeply practical response that reads like an elite Growth Marketer / Chief Marketing Officer.
 2. NEVER convert local currency without user authorization. Use the exact currency specified (${planJson.currency || 'PKR'}).
 3. Use your tools autonomously to execute the assigned subtasks, referencing the Strategic Blueprint for key constraints (like budget pacing, creative angles, or offer tweaks).
 4. Detail dynamic budget pacing matched to the user's specific scale (whether a lean test or a multi-week scale push), campaign structure, offer strategy, creative variations, post-launch rules, and ask a clarifying question.`;
+      }
+
+      const workerSystemPrompt = generateSystemPrompt(businessProfile, historical_context) +
+        `\n\n## MASTERCLASS STRATEGIC BLUEPRINT:\n${planJson.strategic_blueprint || ''}\n\n## ASSIGNED SUBTASKS:\n${JSON.stringify(planJson.subtasks || [], null, 2)}\n\n${workerInstructions}`;
 
       const workerMessages: any[] = [
         { role: 'system', content: workerSystemPrompt },
@@ -1360,7 +1376,7 @@ serve(async (req) => {
               model: reqDetails.model,
               max_tokens: reviewerMaxTokens,
               messages: [
-                { role: 'system', content: config.promptFn(businessProfile) },
+                { role: 'system', content: config.promptFn(businessProfile, dimensions.response_mode) },
                 { role: 'user', content: `Original request: ${prompt}\nPlanner Plan: ${JSON.stringify(planJson)}\nWorker Tools Executed: ${JSON.stringify(toolExecutions)}\nWorker Draft Response: ${finalContent}` }
               ]
             })
