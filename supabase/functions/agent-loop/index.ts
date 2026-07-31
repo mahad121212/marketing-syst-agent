@@ -220,15 +220,12 @@ const INTENT_KEYWORDS: Record<string, string[]> = {
 function classifyUserIntent(prompt: string, businessProfile: any, campaignCount: number) {
   const promptLower = prompt.toLowerCase()
 
-  // Detect if user prompt is a conversational question / challenge / follow-up
-  const questionKeywords = ['why', 'how', 'what', 'could', 'can we', 'instead', 'why did', 'what about', 'is it', 'should we', 'would it', 'difference', 'explain', 'reason']
-  const isConversationalQA = questionKeywords.some(kw => promptLower.includes(kw))
-
   // 1. Budget Tier Classification
+  // Extract budget amount from prompt using regex
   const budgetPatterns = [
     /(?:pkr|inr|usd|aed|sar|gbp|eur|rs\.?|₹|\$|£|€)\s*([\d,]+(?:\.\d+)?)\s*(?:k|thousand|lac|lakh)?/i,
     /([\d,]+(?:\.\d+)?)\s*(?:k|thousand|lac|lakh)?\s*(?:pkr|inr|usd|aed|sar|gbp|eur|rupees?|dollars?|dirhams?|rs)/i,
-    /(?:budget|have|got|spend|towards?|monthly|daily)\s*(?:is|of|us)?\s*(?:pkr|inr|usd|aed|rs\.?|₹|\$|£|€)?\s*([\d,]+(?:\.\d+)?)\s*(?:k|thousand|lac|lakh)?/i
+    /(?:budget|have|got|spend)\s*(?:is|of|us)?\s*(?:pkr|inr|usd|aed|rs\.?|₹|\$|£|€)?\s*([\d,]+(?:\.\d+)?)\s*(?:k|thousand|lac|lakh)?/i
   ]
 
   let extractedBudget: any = null
@@ -238,14 +235,15 @@ function classifyUserIntent(prompt: string, businessProfile: any, campaignCount:
     const match = promptLower.match(pattern)
     if (match) {
       let amount = parseFloat(match[1].replace(/,/g, ''))
+      // Handle multipliers
       if (/k|thousand/i.test(match[0])) amount *= 1000
       if (/lac|lakh/i.test(match[0])) amount *= 100000
 
       const currency = businessProfile?.currency || 'PKR'
-      const rate = CURRENCY_TO_USD[currency] || 0.0036
-      const usdEquivalent = Math.round(amount * rate)
+      const rate = CURRENCY_TO_USD[currency] || 0.01
+      const usdEquivalent = amount * rate
 
-      extractedBudget = { amount, currency, usd_equivalent: usdEquivalent }
+      extractedBudget = { amount, currency, usd_equivalent: Math.round(usdEquivalent) }
 
       if (usdEquivalent < 100) budgetTier = 'MICRO'
       else if (usdEquivalent < 1000) budgetTier = 'GROWTH'
@@ -254,11 +252,12 @@ function classifyUserIntent(prompt: string, businessProfile: any, campaignCount:
     }
   }
 
+  // Fallback to business profile budget if not found in prompt
   if (!extractedBudget && businessProfile?.monthly_ad_budget) {
     const currency = businessProfile.currency || 'PKR'
-    const rate = CURRENCY_TO_USD[currency] || 0.0036
-    const usdEquivalent = Math.round(businessProfile.monthly_ad_budget * rate)
-    extractedBudget = { amount: businessProfile.monthly_ad_budget, currency, usd_equivalent: usdEquivalent }
+    const rate = CURRENCY_TO_USD[currency] || 0.01
+    const usdEquivalent = businessProfile.monthly_ad_budget * rate
+    extractedBudget = { amount: businessProfile.monthly_ad_budget, currency, usd_equivalent: Math.round(usdEquivalent) }
     if (usdEquivalent < 100) budgetTier = 'MICRO'
     else if (usdEquivalent < 1000) budgetTier = 'GROWTH'
     else budgetTier = 'SCALE'
@@ -271,7 +270,7 @@ function classifyUserIntent(prompt: string, businessProfile: any, campaignCount:
     : (COUNTRY_NAME_TO_CODE[countryRaw.toLowerCase()] || 'PK')
   const marketType = MARKET_TRUST_MAP[countryCode] || 'EMERGING'
 
-  // 3. Intent Classification
+  // 3. Intent Classification (keyword matching)
   const intentTypes: string[] = []
   for (const [intent, keywords] of Object.entries(INTENT_KEYWORDS)) {
     if (keywords.some(kw => promptLower.includes(kw))) {
@@ -280,8 +279,10 @@ function classifyUserIntent(prompt: string, businessProfile: any, campaignCount:
   }
   if (intentTypes.length === 0) intentTypes.push('DIRECT_RESPONSE')
 
+  // 4. Industry from business profile
   const industry = (businessProfile?.industry || 'general').toLowerCase()
 
+  // 5. Campaign Stage
   let campaignStage = 'COLD_START'
   if (campaignCount > 0) campaignStage = 'ESTABLISHED'
 
@@ -291,13 +292,11 @@ function classifyUserIntent(prompt: string, businessProfile: any, campaignCount:
     intent_types: intentTypes,
     industry,
     campaign_stage: campaignStage,
-    extracted_budget: extractedBudget,
-    is_conversational_qa: isConversationalQA,
-    response_mode: isConversationalQA ? 'CONVERSATIONAL_QA' : 'FULL_STRATEGY'
+    extracted_budget: extractedBudget
   }
 }
 
-async function retrieveKnowledge(supabaseClient: any, dimensions: any): Promise<{ context: string, count: number }> {
+async function retrieveKnowledge(supabaseClient: any, dimensions: any): Promise<string> {
   try {
     const { data: allKnowledge, error } = await supabaseClient
       .from('marketing_knowledge')
@@ -306,41 +305,52 @@ async function retrieveKnowledge(supabaseClient: any, dimensions: any): Promise<
 
     if (error || !allKnowledge || allKnowledge.length === 0) {
       console.error('Knowledge retrieval failed:', error?.message || 'No documents found')
-      return { context: '', count: 0 }
+      return ''
     }
 
+    // Score each document by dimension overlap
     const scored = allKnowledge.map((doc: any) => {
       let score = 0
       const dims = doc.dimensions || {}
 
+      // Budget tier match (weight: 2)
       if (dims.budget_tiers?.includes(dimensions.budget_tier) || dims.budget_tiers?.includes('ALL')) score += 2
+
+      // Market type match (weight: 2)
       if (dims.market_types?.includes(dimensions.market_type) || dims.market_types?.includes('ALL')) score += 2
 
+      // Intent match (weight: 3 — strongest signal)
       for (const intent of dimensions.intent_types) {
         if (dims.intent_types?.includes(intent) || dims.intent_types?.includes('ALL')) { score += 3; break }
       }
 
+      // Campaign stage match (weight: 1)
       if (dims.campaign_stages?.includes(dimensions.campaign_stage) || dims.campaign_stages?.includes('ALL')) score += 1
+
+      // Industry match (weight: 1)
       if (dims.industries?.includes(dimensions.industry) || dims.industries?.includes('ALL')) score += 1
 
+      // Priority boost (0-1 range)
       score += (doc.priority || 5) / 10
 
       return { ...doc, score }
     })
 
+    // Sort by score descending, take top 5
     scored.sort((a: any, b: any) => b.score - a.score)
     const topDocs = scored.slice(0, 5)
 
-    if (topDocs.length === 0) return { context: '', count: 0 }
+    if (topDocs.length === 0) return ''
 
+    // Concatenate into knowledge context
     const knowledgeContext = topDocs
       .map((doc: any) => `### ${doc.title}\n${doc.content}`)
       .join('\n\n---\n\n')
 
-    return { context: knowledgeContext, count: topDocs.length }
+    return knowledgeContext
   } catch (err: any) {
     console.error('Knowledge retrieval error:', err.message)
-    return { context: '', count: 0 }
+    return ''
   }
 }
 
@@ -372,33 +382,30 @@ ${profileContext}
 ## Holistic First-Principles Reasoning Rules:
 1. HOLISTIC EVALUATION: Do NOT rely on rigid formulas or hardcoded rules. Synthesize target country CPM economics, margin/AOV, business model, and user resources.
 2. CURRENCY INTEGRITY: Preserve the user's native currency (${businessProfile?.currency || 'PKR'}) at all times.
-3. INTENT-ADAPTIVE CONVERSATIONAL DYNAMICS:
-   - **Conversational Questions & Challenges**: If the user is asking a question ("why did you select X?", "what about Y?"), challenging a choice ("could we do 700 instead?"), or giving feedback, your `strategic_blueprint` MUST FIRST answer the user's question directly. Provide an objective trade-off analysis comparing the original recommendation vs the user's alternative. Do NOT force a 2-page production blueprint template when the user just asked a Q&A question!
-   - **New Campaign Requests**: If the user explicitly asks to build a new campaign or full strategy, provide a comprehensive Masterclass Strategic Blueprint covering pacing, hooks, visual style, and structure.
-4. ANTI-SYCOPHANCY & CMO INTEGRITY:
-   - Reason from first principles. If the user challenges a choice (e.g. 1,500 vs 700 PKR/day), evaluate both objectively. Explain WHY 1,500 was chosen (pacing for learning phase), but show how 700 would perform (longer duration, lower daily volume). Do not apologize or blindly abandon your analysis unless the user explicitly mandates a change.
-   - If the user explicitly commands a change after hearing the trade-offs, yield gracefully and adapt to the user's preference.
-5. UNIFIED PLAN:
-   - **Strategic Blueprint**: Write a detailed markdown response tailored to the user's prompt (Q&A explanation vs Full Blueprint).
-   - **Subtasks Roadmap**: Provide a sequential checklist of jobs the Worker needs to execute.
+3. TIMELINE & PACING GUARDRAILS:
+   - **Direct User Constraint**: If the user explicitly asks to run a campaign for a specific duration (e.g. "run for 2 days"), you MUST respect and match your strategy to this timeline.
+   - **Open-Ended Strategy**: If the timeline is open-ended, reason from first principles. Propose a robust budget test pacing plan (recommend 4+ days to capture daily fluctuations and allow Meta's machine learning/CPA optimization to gather adequate conversion data).
+4. UNIFIED PLAN:
+   - **Strategic Blueprint**: Write a detailed markdown strategy covering budget pacing logic, creative hook themes, average order value leverage, and post-launch decision trees.
+   - **Subtasks Roadmap**: Provide a sequential checklist of jobs the Worker needs to execute to achieve the blueprint. The Worker will autonomously choose the best tools to perform these jobs.
 
 You MUST respond ONLY with a JSON object in this format (no markdown codeblock markers, no extraneous wrapper text):
 {
   "internal_monologue": "Write a natural, first-person narrative monologue (2-4 paragraphs) reasoning holistically from first principles.",
   "currency": "${businessProfile?.currency || 'PKR'}",
   "is_total_wallet": true,
-  "strategic_blueprint": "Deep markdown text containing step-by-step masterclass strategy or direct conversational Q&A analysis depending on prompt intent",
-  "subtasks": ["Subtask 1 (e.g. Address user budget question)", "Subtask 2 (e.g. Outline trade-off analysis)"],
+  "strategic_blueprint": "Deep markdown text containing step-by-step masterclass strategy including budget pacing, campaign structure, creative hooks, offer advice, and post-launch rules",
+  "subtasks": ["Subtask 1 (e.g. Understand budget constraints)", "Subtask 2 (e.g. Analyze competitors)", "Subtask 3 (e.g. Design campaign)"],
   "key_questions": ["What exact product or niche are you selling?", "Is your Meta Pixel active?"]
 }`;
 }
 
-function generateStrategyReviewerPrompt(businessProfile: any, responseMode?: string) {
+function generateStrategyReviewerPrompt(businessProfile: any) {
   let profileContext = businessProfile ? `Business: ${businessProfile.business_name} (${businessProfile.country})` : '';
   return `You are the Chief Strategy Officer Reviewer.
 Your job is to audit the response for holistic strategy depth and actionable intelligence:
-- If the response mode is CONVERSATIONAL_QA, PASS if the agent directly and accurately answers the user's specific question or challenge. Do NOT fail it for lacking full campaign architecture.
-- If the response mode is FULL_STRATEGY, FAIL if the response is generic, relies on rigid templates, or lacks a clear campaign architecture, offer advice, and target audience alignment. PASS ONLY if the response provides a masterclass strategic breakdown.
+- FAIL if the response is generic, relies on rigid templates, or lacks a clear campaign architecture, offer advice, and target audience alignment.
+- PASS ONLY if the response provides a masterclass strategic breakdown tailored to the business.
 ${profileContext}
 
 Respond ONLY with a JSON object:
@@ -409,10 +416,9 @@ Respond ONLY with a JSON object:
 }`;
 }
 
-function generateCopyReviewerPrompt(businessProfile: any, responseMode?: string) {
+function generateCopyReviewerPrompt(businessProfile: any) {
   return `You are the Lead Copywriting Reviewer.
 Your job is to audit the copywriting suggestions, ad copy hooks, and primary texts:
-- If this is a CONVERSATIONAL_QA that doesn't involve copywriting, just PASS.
 - FAIL if the copy is dry, standard AI-sounding ("Unleash your potential", "Are you tired of X?"), or lacks emotional hooks.
 - PASS if the copywriting proposals use modern marketing hooks (like problem-agitation-solution, hook-story-offer) tailored to target avatar desires.
 
@@ -424,10 +430,9 @@ Respond ONLY with a JSON object:
 }`;
 }
 
-function generateCreativeReviewerPrompt(businessProfile: any, responseMode?: string) {
+function generateCreativeReviewerPrompt(businessProfile: any) {
   return `You are the Creative Director Reviewer.
 Your job is to audit visual layout proposals, image/video suggestions, and creative hooks:
-- If this is a CONVERSATIONAL_QA that doesn't involve creative suggestions, just PASS.
 - FAIL if the suggestions are vague ("use a high quality photo") or lack actionable details for a designer.
 - PASS if the creative suggestions describe exact visual hooks, video pacing, overlay texts, and CTA styles.
 
@@ -439,11 +444,10 @@ Respond ONLY with a JSON object:
 }`;
 }
 
-function generateDiversityReviewerPrompt(businessProfile: any, responseMode?: string) {
+function generateDiversityReviewerPrompt(businessProfile: any) {
   let budgetCap = businessProfile?.monthly_ad_budget ? `${businessProfile.monthly_ad_budget} ${businessProfile.currency || 'USD'}` : 'Not provided';
   return `You are the Creative Diversity Auditor.
 Your job is to contextually audit the diversity of ad angles, hooks, and formats:
-- If this is a CONVERSATIONAL_QA that doesn't involve ads, just PASS.
 - evaluate contextually based on budget scale. The user's monthly budget cap is: ${budgetCap}.
 - DO NOT be dogmatically biased. If the budget is very small (e.g. under 5,000 PKR / $50 USD total), do NOT fail the plan for having only a couple of simple static ad angles.
 - If the budget is healthy, check if there is a mix of formats (e.g. UGC vs Carousel vs Static Image) or angles to prevent creative fatigue.
@@ -457,7 +461,7 @@ Respond ONLY with a JSON object:
 }`;
 }
 
-function generateComplianceReviewerPrompt(businessProfile: any, responseMode?: string) {
+function generateComplianceReviewerPrompt(businessProfile: any) {
   return `You are the Technical Operations & Compliance Auditor.
 Your job is to audit tool execution, compliance with Meta policies, and operational safety:
 - Ensure the agent does not force-create campaigns on Meta if the user only asked for strategic advice.
@@ -472,11 +476,10 @@ Respond ONLY with a JSON object:
 }`;
 }
 
-function generatePerformanceReviewerPrompt(businessProfile: any, responseMode?: string) {
+function generatePerformanceReviewerPrompt(businessProfile: any) {
   let currency = businessProfile?.currency || 'PKR';
   return `You are the VP of Finance & Growth Reviewer.
 Your job is to audit budget pacing, expected ROAS, and performance metrics:
-- If this is a CONVERSATIONAL_QA that doesn't involve a new budget plan, just PASS.
 - FAIL if the agent converted local currency (${currency}) without authorization or proposed mathematically illiterate budget pacing.
 - TIMELINE & PACING:
   - If the user explicitly asked to run for a specific number of days, you MUST respect that constraint and evaluate performance pacing relative to that timeline. Do NOT fail the plan for running short-term if the user explicitly commanded it.
@@ -520,10 +523,8 @@ Respond ONLY with a JSON object:
 
 function generateFormatterPrompt() {
   return `You are the Expert Content Formatter.
-Your task is to take the final approved ad plan/strategy or Q&A analysis and convert it into a beautiful, professional, and easy-to-read markdown layout:
-- Adapt the format to the intent: If it is a conversational Q&A/trade-off analysis, present it as a clean, direct Q&A explanation with bullet points and comparison tables. If it is a full production brief, format it with full creative blueprints.
-- Do NOT force artificial template headers (like "Brand Visual Style Guide") if the response is answering a specific user question.
-- Highlight key strategic takeaways, budget allocations, trade-off comparisons, and visual details.
+Your task is to take the final approved ad plan/strategy and convert it into a beautiful, professional, and easy-to-read markdown layout:
+- Highlight key strategic takeaways, budget allocations, ad structure, copywriting hooks, and visual details.
 - Use bullet points, bold text, warning blocks, and tables where appropriate to maximize readability.
 - Maintain the exact currency and numbers proposed.
 
@@ -556,17 +557,7 @@ BUSINESS CONTEXT:
 ${profileContext}
 
 ## Core Identity & Agency (Worker-Decides Architecture)
-You are an autonomous SENIOR MEDIA BUYER & GROWTH PARTNER. The Strategic Planner has provided you with a ROADMAP OF SUBTASKS and STRATEGIC BLUEPRINT.
-
-### Intent-Adaptive Conversational Dynamics:
-- **Right-Sized Response Depth**:
-  - If the user asks a question, challenges a choice, or asks "Why", ANSWER THE QUESTION DIRECTLY as a senior growth partner in your first section.
-  - Explain the trade-offs of the user's suggestion vs. your recommendation objectively.
-  - Do NOT force a rigid 2-page campaign brief template on conversational follow-up questions. Match your output depth to the query intent.
-- **Anti-Sycophancy & CMO Integrity**:
-  - Never apologize or blindly abandon a solid marketing recommendation just because the user questioned it.
-  - Stand on first-principles CMO reasoning. Explain WHY a decision was made (e.g. Meta learning phase requirements).
-  - However, if the user explicitly COMMANDS a change after hearing the trade-offs, yield gracefully and adapt to the user's preference.
+You are an autonomous SENIOR MEDIA BUYER. The Strategic Planner has provided you with a ROADMAP OF SUBTASKS. Your job is NOT to blindly execute a script, but to evaluate those subtasks and independently decide HOW to accomplish them.
 
 ### Tool Selection & Reasoning Hierarchy (always follow this order):
 1. **Review Subtasks** — Read the subtasks assigned to you by the Planner.
@@ -1216,17 +1207,16 @@ serve(async (req) => {
       const dimensions = classifyUserIntent(prompt, businessProfile, campaignCount || 0)
       thinkingSteps.push(`📊 Classified: Budget=${dimensions.budget_tier} (${dimensions.extracted_budget ? '$' + dimensions.extracted_budget.usd_equivalent + ' USD equiv.' : 'unknown'}), Market=${dimensions.market_type}, Intent=${dimensions.intent_types.join('+')}, Stage=${dimensions.campaign_stage}`)
 
-      const knowledgeResult = await retrieveKnowledge(supabaseClient, dimensions)
-      const knowledgeContext = knowledgeResult.context
-      if (knowledgeResult.count > 0) {
-        thinkingSteps.push(`📚 Retrieved ${knowledgeResult.count} marketing knowledge frameworks as context. (Response Mode: ${dimensions.response_mode})`)
+      const knowledgeContext = await retrieveKnowledge(supabaseClient, dimensions)
+      if (knowledgeContext) {
+        thinkingSteps.push(`📚 Retrieved ${knowledgeContext.split('###').length - 1} marketing knowledge frameworks as context.`)
       } else {
         thinkingSteps.push('📚 No knowledge frameworks matched (proceeding with LLM general knowledge).')
       }
 
       // Build the enriched Planner input with knowledge context
       const plannerUserMessage = knowledgeContext
-        ? `## MARKETING INTELLIGENCE CONTEXT (Retrieved Frameworks)\nThe following are universal marketing frameworks retrieved based on the user's context. Use these as reference material to inform your strategic response — they are principles, not commands.\n\n${knowledgeContext}\n\n## CLASSIFIED DIMENSIONS\n- Budget Tier: ${dimensions.budget_tier}${dimensions.extracted_budget ? ` (${dimensions.extracted_budget.amount} ${dimensions.extracted_budget.currency} ≈ $${dimensions.extracted_budget.usd_equivalent} USD)` : ''}\n- Market Type: ${dimensions.market_type}\n- User Intent: ${dimensions.intent_types.join(', ')}\n- Response Mode: ${dimensions.response_mode}\n- Campaign Stage: ${dimensions.campaign_stage}\n- Industry: ${dimensions.industry}\n\n## USER REQUEST\n${prompt}`
+        ? `## MARKETING INTELLIGENCE CONTEXT (Retrieved Frameworks)\nThe following are universal marketing frameworks retrieved based on the user's context. Use these as reference material to inform your strategic blueprint — they are principles, not commands.\n\n${knowledgeContext}\n\n## CLASSIFIED DIMENSIONS\n- Budget Tier: ${dimensions.budget_tier}${dimensions.extracted_budget ? ` (${dimensions.extracted_budget.amount} ${dimensions.extracted_budget.currency} ≈ $${dimensions.extracted_budget.usd_equivalent} USD)` : ''}\n- Market Type: ${dimensions.market_type}\n- User Intent: ${dimensions.intent_types.join(', ')}\n- Campaign Stage: ${dimensions.campaign_stage}\n- Industry: ${dimensions.industry}\n\n## USER REQUEST\n${prompt}`
         : prompt
 
       // ===== PHASE 1: Strategic Planner =====
@@ -1272,24 +1262,12 @@ serve(async (req) => {
 
       // Phase 2: Worker OODA Loop
       thinkingSteps.push('⚙️ Executing Worker loop guided by Unified Roadmap & Blueprint...')
-      let workerInstructions = '';
-      if (dimensions.response_mode === 'CONVERSATIONAL_QA') {
-        workerInstructions = `INSTRUCTIONS FOR YOUR RESPONSE:
-1. The user has asked a question, requested a different perspective, or challenged a decision. You are in a CONVERSATION.
-2. ANSWER DIRECTLY AND CONCISELY. Do NOT output a massive 2-page campaign blueprint. Do NOT detail budget pacing, creative variations, or offer strategies unless the user explicitly requested them in this prompt.
-3. Use the Strategic Blueprint above as your reasoning guide, but format your output as a natural, conversational response addressing the user's exact input.
-4. NEVER convert local currency without user authorization. Use the exact currency specified (${planJson.currency || 'PKR'}).
-5. Use your tools autonomously ONLY if the assigned subtasks require execution.`;
-      } else {
-        workerInstructions = `INSTRUCTIONS FOR YOUR RESPONSE:
+      const workerSystemPrompt = generateSystemPrompt(businessProfile, historical_context) +
+        `\n\n## MASTERCLASS STRATEGIC BLUEPRINT:\n${planJson.strategic_blueprint || ''}\n\n## ASSIGNED SUBTASKS:\n${JSON.stringify(planJson.subtasks || [], null, 2)}\n\nINSTRUCTIONS FOR YOUR RESPONSE:
 1. Deliver a comprehensive, deeply practical response that reads like an elite Growth Marketer / Chief Marketing Officer.
 2. NEVER convert local currency without user authorization. Use the exact currency specified (${planJson.currency || 'PKR'}).
 3. Use your tools autonomously to execute the assigned subtasks, referencing the Strategic Blueprint for key constraints (like budget pacing, creative angles, or offer tweaks).
 4. Detail dynamic budget pacing matched to the user's specific scale (whether a lean test or a multi-week scale push), campaign structure, offer strategy, creative variations, post-launch rules, and ask a clarifying question.`;
-      }
-
-      const workerSystemPrompt = generateSystemPrompt(businessProfile, historical_context) +
-        `\n\n## MASTERCLASS STRATEGIC BLUEPRINT:\n${planJson.strategic_blueprint || ''}\n\n## ASSIGNED SUBTASKS:\n${JSON.stringify(planJson.subtasks || [], null, 2)}\n\n${workerInstructions}`;
 
       const workerMessages: any[] = [
         { role: 'system', content: workerSystemPrompt },
@@ -1376,7 +1354,7 @@ serve(async (req) => {
               model: reqDetails.model,
               max_tokens: reviewerMaxTokens,
               messages: [
-                { role: 'system', content: config.promptFn(businessProfile, dimensions.response_mode) },
+                { role: 'system', content: config.promptFn(businessProfile) },
                 { role: 'user', content: `Original request: ${prompt}\nPlanner Plan: ${JSON.stringify(planJson)}\nWorker Tools Executed: ${JSON.stringify(toolExecutions)}\nWorker Draft Response: ${finalContent}` }
               ]
             })
