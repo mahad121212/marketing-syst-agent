@@ -562,13 +562,15 @@ Respond ONLY with a JSON object:
 }
 
 function generateFormatterPrompt() {
-  return `You are the Expert Content Formatter.
-Your task is to take the final approved ad plan/strategy and convert it into a beautiful, professional, and easy-to-read markdown layout:
-- Highlight key strategic takeaways, budget allocations, ad structure, copywriting hooks, and visual details.
-- Use bullet points, bold text, warning blocks, and tables where appropriate to maximize readability.
-- Maintain the exact currency and numbers proposed.
+  return `You are NOT the conversational assistant. You are an INTERNAL formatting service.
+Your sole job is to clean up, structure, and format the strategy text provided in the prompt into a beautiful, high-converting markdown layout.
 
-Respond ONLY with the formatted final response in markdown.`;
+STRICT RULES:
+- Do NOT speak to the user, greet the user, or explain your role.
+- Do NOT ask questions or request additional content (NEVER say "Please provide...", "Paste the details...", etc.).
+- Do NOT output conversational filler.
+- If the provided input is incomplete or missing, return the provided input text VERBATIM without modification.
+- Return ONLY the formatted markdown representation of the provided strategy.`;
 }
 
 // ============================================================
@@ -1525,7 +1527,7 @@ serve(async (req) => {
         if (workerRes.ok) {
           const aiData = await workerRes.json()
           const assistantMsg = aiData.choices[0].message
-          finalContent = assistantMsg.content || ''
+          finalContent = assistantMsg.content || conversationBrain.core_strategy || conversationBrain.planner_blueprint
           
           if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0) {
             for (const toolCall of assistantMsg.tool_calls) {
@@ -1547,10 +1549,15 @@ serve(async (req) => {
             }
           }
         } else {
-          finalContent = conversationBrain.core_strategy
+          finalContent = conversationBrain.core_strategy || conversationBrain.planner_blueprint
         }
 
-        // ===== PHASE 6: Formatter =====
+        // Ensure finalContent is populated from the central mental model if empty
+        if (!finalContent || finalContent.trim().length === 0) {
+          finalContent = conversationBrain.core_strategy || conversationBrain.planner_blueprint || "Strategy successfully calculated."
+        }
+
+        // ===== PHASE 6: Internal Formatter Service =====
         thinkingSteps.push('✍️ Formatting finalized ad strategy layout...')
         try {
           const reqDetails = getLLMRequestDetails(openRouterKey, model)
@@ -1568,7 +1575,11 @@ serve(async (req) => {
           })
           if (formatterRes.ok) {
             const data = await formatterRes.json()
-            finalContent = data.choices[0].message.content || finalContent
+            const formatted = data.choices[0]?.message?.content || ''
+            // Guardrail: Never allow Formatter to output a role-locked prompt request to the user
+            if (formatted && !formatted.toLowerCase().includes('please provide') && !formatted.toLowerCase().includes('paste the details')) {
+              finalContent = formatted
+            }
           }
         } catch (err: any) {
           console.error('Formatter failed:', err.message)
