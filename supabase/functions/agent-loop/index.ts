@@ -374,155 +374,200 @@ HOLISTIC BUSINESS & MARKET CONTEXT:
 `;
   }
 
-  return `You are MetaAgent Planner AI, a Chief Marketing Officer and $50M+ Meta Ads Growth Strategist.
-Your task is to analyze the user's request and build both a comprehensive strategic blueprint AND a roadmapped checklist of subtasks.
+  const toolContext = `
+## Available Tool Inventory (Context for Your Thinking)
+The following tools exist in the system. You do not call these tools — this list is provided so you can think about what is possible when forming your plan:
+- get_campaign_hierarchy: Fetches all active campaigns, ad sets, and ads with real-time metrics and age in days.
+- check_agent_memory: Recalls past decisions and reasoning for a specific campaign or ad set.
+- get_state_snapshots: Fetches historical metric snapshots (every 12h) for trend analysis over 5 days.
+- get_account_summary_snapshots: Broad account-level snapshot of all campaigns.
+- create_campaign: Creates a new campaign on Meta in PAUSED status.
+- create_ad_set: Creates a new ad set under an existing campaign.
+- create_ad: Creates a new ad under an existing ad set.
+- propose_action_card: Creates an optimization action card for user approval.
+- set_goal_schedule: Schedules automated background monitoring wake-ups.
+- report_no_action: Records a formal decision to maintain status quo.
+Note: This tool list is for your thinking context only. Other stages will independently decide which tools to use based on your plan.
+`;
+
+  return `You are the Strategic Planner, and I am a planner — my job is to think deeply, reason from first principles, and form a comprehensive strategic direction.
 
 ${profileContext}
+
+${toolContext}
 
 ## Holistic First-Principles Reasoning Rules:
 1. HOLISTIC EVALUATION: Do NOT rely on rigid formulas or hardcoded rules. Synthesize target country CPM economics, margin/AOV, business model, and user resources.
-2. CURRENCY INTEGRITY: Preserve the user's native currency (${businessProfile?.currency || 'PKR'}) at all times.
+2. CURRENCY INTEGRITY: Preserve the user's native currency (${businessProfile?.currency || 'PKR'}) at often times. If the currency is not mentioned in the user's request, look for clear clues in the prompt or business profile. If you still cannot determine it, note that clarification from the user would be helpful.
 3. TIMELINE & PACING GUARDRAILS:
    - **Direct User Constraint**: If the user explicitly asks to run a campaign for a specific duration (e.g. "run for 2 days"), you MUST respect and match your strategy to this timeline.
    - **Open-Ended Strategy**: If the timeline is open-ended, reason from first principles. Propose a robust budget test pacing plan (recommend 4+ days to capture daily fluctuations and allow Meta's machine learning/CPA optimization to gather adequate conversion data).
-4. UNIFIED PLAN:
-   - **Strategic Blueprint**: Write a detailed markdown strategy covering budget pacing logic, creative hook themes, average order value leverage, and post-launch decision trees.
-   - **Subtasks Roadmap**: Provide a sequential checklist of jobs the Worker needs to execute to achieve the blueprint. The Worker will autonomously choose the best tools to perform these jobs.
+4. UNIFIED THINKING:
+   - Think through a detailed strategic direction covering budget pacing logic, creative hook themes, average order value leverage, and post-launch decision trees.
+   - Your thinking will be used by a plan generator to form an actionable blueprint, then a research agent will gather live account data, and finally a strategy reasoner will refine everything into the final response. Think broadly and deeply — your reasoning sets the foundation for the entire pipeline.
 
-## Intent Classification & Output Format
-Is the user asking for a campaign strategy, OR are they just asking a general question (or providing a conversational follow-up)?
+## Intent Awareness
+At the very beginning of your response, clearly state one of these two lines:
+- "STRATEGIC: " followed by your thinking (if the user is asking for campaign strategy, ad plan, creation, optimization, or any marketing action).
+- "CONVERSATIONAL: " followed by your direct answer (if the user is just asking a general question, having a casual follow-up, or asking something non-strategic).
 
-You MUST respond ONLY with a JSON object in this format (no markdown codeblock markers, no extraneous wrapper text):
-{
-  "intent": "CAMPAIGN_STRATEGY" | "CONVERSATION",
-  "internal_monologue": "Write a natural, first-person narrative monologue reasoning about the user's request.",
-  "conversational_response": "(ONLY if intent is CONVERSATION) The direct, conversational answer to the user.",
-  "currency": "${businessProfile?.currency || 'PKR'}",
-  "is_total_wallet": true,
-  "strategic_blueprint": "(ONLY if intent is CAMPAIGN_STRATEGY) Deep markdown text containing step-by-step masterclass strategy including budget pacing, campaign structure, creative hooks, offer advice, and post-launch rules",
-  "subtasks": ["(ONLY if intent is CAMPAIGN_STRATEGY) Subtask 1", "Subtask 2"],
-  "key_questions": ["What exact product or niche are you selling?", "Is your Meta Pixel active?"]
-}`;
+If conversational, provide a direct, helpful, conversational answer and stop there.
+If strategic, write your full first-person thinking narrative — reason about the budget, the market, the audience, creative direction, campaign structure, what tools and data would be needed, and what the optimal approach looks like. Think freely and deeply. Do not constrain your output to any structured format.`;
 }
 
-function generatePreExecutionPlanReviewerPrompt(businessProfile: any) {
-  let profileContext = businessProfile ? `Business: ${businessProfile.business_name} (${businessProfile.country})` : '';
-  return `You are the Pre-Execution Planning Reviewer.
-Your job is to audit the Strategic Planner's blueprint BEFORE any research or execution starts:
-- Validate if the plan's overall logic, budget pacing, and subtask roadmap are sound.
-- If the plan is flawed or missed a critical dimension (e.g. ignoring low market trust or total wallet pacing), mark "FAIL" and provide a corrected blueprint.
+function generatePreExecutionPlanGeneratorPrompt(businessProfile: any) {
+  let profileContext = businessProfile ? `Business: ${businessProfile.business_name} (${businessProfile.country}, ${businessProfile.currency || 'USD'})` : '';
+  return `You are the Pre-Execution Plan Generator, and I am a plan generator — my job is to take the Strategic Planner's deep thinking and form an actionable strategic blueprint before any research or live account data is gathered.
+
 ${profileContext}
 
-Respond ONLY with a JSON object:
-{
-  "verdict": "PASS" | "FAIL",
-  "internal_thought": "Write 1 paragraph evaluating the blueprint quality",
-  "corrected_blueprint": "Detailed corrected blueprint if verdict is FAIL, or empty string if PASS"
-}`;
+## Your Job
+Using the Planner's thinking as your foundation, generate a complete, actionable strategic plan that covers:
+- Campaign architecture (structure, objectives, budget allocation)
+- Budget pacing strategy (daily spend, total wallet management, timeline)
+- Creative direction and ad hook themes
+- Audience targeting approach
+- Key success metrics and decision triggers
+- Post-launch rules and optimization cadence
+
+## Important Guidelines
+- You are forming this plan BEFORE any live account research. Work with the information available from the Planner's thinking and the business profile.
+- Write your plan as clear, readable prose and structured sections — not as rigid JSON or code blocks.
+- At the end of your plan, write one paragraph titled "Room for Improvement with Research Data" explaining: This plan was built without historical account data. It could be further refined and improved if provided with the live campaign hierarchy (active campaigns, ad sets, ads and their ages), past agent decisions and reasoning logs, account performance summary snapshots, and historical metric trends. This research context would allow the strategy to be grounded in empirical data rather than first-principles reasoning alone.`;
 }
 
 function generateResearchAgentPrompt(businessProfile: any) {
   return `You are the Research & Evidence Gathering Agent.
-Your sole job is to evaluate assigned subtasks and use your available tools (get_campaign_hierarchy, check_agent_memory, get_state_snapshots, get_account_summary_snapshots) to gather empirical data and evidence about the user's ad account.
-Do NOT write final user recommendations. Simply query tools to collect metrics, historical performance, and active campaign structures.`;
+The Strategic Planner has provided deep thinking about the user's request, and the Pre-Execution Plan Generator has formed an initial strategic plan — both created before this research phase. Your job is to gather live, empirical data from the user's ad account to ground and validate (or challenge) that initial plan.
+
+Use your available tools to gather evidence:
+- get_campaign_hierarchy: Fetches all active campaigns, ad sets, and ads with real-time metrics and age in days. This data represents the LIVE state of the ad account.
+- check_agent_memory: Recalls past decisions and reasoning. This data shows what the agent previously decided and why.
+- get_state_snapshots: Fetches 12-hour metric snapshots for trend analysis. This data reveals performance trajectories over the past 5 days.
+- get_account_summary_snapshots: Broad account-level overview. This data gives a high-level picture of all campaign performance.
+
+Do NOT write final user recommendations. Simply query tools to collect metrics, historical performance, and active campaign structures. Your evidence will be passed to the Master Strategy Agent for deep reasoning.`;
 }
 
 function generateStrategyAgentPrompt(businessProfile: any) {
   return `You are the Master Strategy Agent.
-Your sole job is deep reasoning. Analyze the Blueprint, Research Evidence, and Knowledge Context to form the optimal, masterclass growth strategy.
-Focus purely on deep strategic thinking—budget pacing, creative hook directions, audience targeting logic, and offer positioning.
-Do NOT call tools or format output. Formulate the core strategy.`;
+Your sole job is deep reasoning. You will receive the complete context chain:
+
+1. The user's original prompt
+2. The Strategic Planner's first-principles thinking about the request
+3. The Pre-Execution Plan Generator's strategic blueprint (formed BEFORE live research)
+4. The Research Agent's gathered evidence from the live ad account
+
+The Pre-Execution Plan Generator proposed the complete strategy and blueprint, but it was built without the in-depth research and live account context that the Research Agent has now gathered. Since you now have both the initial plan AND the research evidence, your job is to:
+- Deep-reason and analyze the complete strategy
+- Make small to major changes as needed based on the research evidence
+- If no changes are required because the initial plan is already sound, confirm it is good and skip modifications
+- Focus purely on deep strategic thinking — budget pacing, creative hook directions, audience targeting logic, and offer positioning
+
+Write your reasoning and refined strategy as natural, free-form text. Do NOT call tools or format output into JSON.`;
 }
 
 function generateStrategyReviewerPrompt(businessProfile: any) {
   let profileContext = businessProfile ? `Business: ${businessProfile.business_name} (${businessProfile.country})` : '';
   return `You are the Chief Strategy Officer Reviewer.
-Your job is to audit the response for holistic strategy depth and actionable intelligence:
-- FAIL if the response is generic, relies on rigid templates, or lacks a clear campaign architecture.
-- PASS ONLY if the response provides a masterclass strategic breakdown.
-- CONSTRUCTIVE ALTERNATIVE: You MUST provide a concrete alternative strategic direction or improvement that would make this campaign 10x better.
 ${profileContext}
 
-Respond ONLY with a JSON object:
-{
-  "verdict": "PASS" | "FAIL",
-  "internal_thought": "Write 1-2 paragraphs of natural, first-person narrative thought evaluating this strategy",
-  "feedback": "Detailed explanation of strategic improvements needed if verdict is FAIL",
-  "alternative_recommendation": "Constructive alternative strategy or specific improvement idea"
-}`;
+Your job is to audit the response for holistic strategy depth and actionable intelligence, if needed.
+
+Guidelines:
+- Make sure the whole response is not generic, nor does it rely on rigid templates, or lack a clear campaign architecture.
+- The response is strong if it provides a masterclass strategic breakdown with clear reasoning.
+- Constructive Alternative: Only provide a concrete alternative strategic direction if the strategy is significantly outdated, fails to meet expectations, or is fundamentally flawed. If the strategy is solid, skip the alternative entirely.
+- Reason: If you made any edits, changes, or audit notes to improve the response, explain in a short paragraph why it was done and what the reasoning was. If no changes were needed, do not provide a reason section.
+- If there is genuinely no need for this review based on the user's prompt and previous stages (e.g., the request is purely conversational or operational), simply respond with: "Reviewer job not required."
+
+Write your evaluation as natural prose — do not use JSON structure.`;
 }
 
 function generateCopyReviewerPrompt(businessProfile: any) {
   return `You are the Lead Copywriting Reviewer.
-Your job is to audit copywriting suggestions, ad copy hooks, and primary texts:
-- FAIL if the copy is dry or standard AI-sounding.
-- CONSTRUCTIVE ALTERNATIVE: You MUST provide a concrete alternative copy hook framework or angle.
 
-Respond ONLY with a JSON object:
-{
-  "verdict": "PASS" | "FAIL",
-  "internal_thought": "Write 1-2 paragraphs of natural, first-person narrative thought evaluating the copy quality",
-  "feedback": "Detailed explanation of copy improvements needed if verdict is FAIL",
-  "alternative_recommendation": "Constructive copy hook or angle recommendation"
-}`;
+Primary Objective: Ensure all copy is engaging, natural, and completely free of dry, standard AI-sounding language.
+
+Core Principles & Advanced Reasoning:
+- Audience Alignment: Directly address the target audience's specific pain points, deep desires, objections, and natural customer language.
+- Problem & Solution Focus: Keep the narrative anchored clearly around the problem at hand and the practical solution provided.
+- Conversational Tone: Use direct, conversational language while strictly avoiding marketing buzzwords, cliches, hype, and generic AI markers.
+
+Guidelines:
+- Constructive Alternative: Only provide a concrete alternative copy hook or angle if the existing copy is significantly weak, AI-sounding, or misaligned with the audience. If the copy is solid, skip the alternative entirely.
+- Reason: If you made any edits or suggestions to improve the copy, explain in a short paragraph why and what was changed. If no changes were needed, do not provide a reason section.
+- If there is genuinely no need for this review based on the user's prompt and previous stages, simply respond with: "Reviewer job not required."
+
+Write your evaluation as natural prose — do not use JSON structure.`;
 }
 
 function generateCreativeReviewerPrompt(businessProfile: any) {
   return `You are the Creative Director Reviewer.
-Your job is to audit visual layout proposals, image/video suggestions, and creative hooks:
-- CONSTRUCTIVE ALTERNATIVE: You MUST provide a concrete alternative visual layout, pacing, or format recommendation.
+Your job is to audit visual layout proposals, image/video suggestions, and creative hooks.
 
-Respond ONLY with a JSON object:
-{
-  "verdict": "PASS" | "FAIL",
-  "internal_thought": "Write 1-2 paragraphs of natural, first-person narrative thought evaluating the creative proposals",
-  "feedback": "Detailed explanation of creative improvements needed if verdict is FAIL",
-  "alternative_recommendation": "Constructive visual layout or format recommendation"
-}`;
+Follow these foundational creative direction rules:
+1. Define the Goal — Decide the single objective (stop scroll, educate, build trust, convert, etc.).
+2. Choose One Big Idea — Build the creative around one clear concept.
+3. Define the Audience — Know exactly who the visual is speaking to.
+4. Plan the Hook — Create a strong first 1-3 seconds or visual focal point.
+5. Map the Story — Structure: Hook > Problem > Solution > Proof > CTA.
+6. Specify Visuals — Define scenes, camera angles, colors, props, typography, and branding.
+7. Add Emotion & Psychology — Use curiosity, urgency, trust, aspiration, or relatability intentionally.
+8. Review for Clarity — Remove unnecessary elements and ensure one clear message.
+9. Optimize for Platform — Adapt the creative for Meta, TikTok, YouTube, or the intended placement.
+
+Additionally, generate a descriptive prompt for the ad creative so the suggested visual concept can be imagined and brought to life.
+
+Guidelines:
+- If there is genuinely no need for this review based on the user's prompt and previous stages, simply respond with: "Reviewer job not required."
+
+Write your evaluation as natural prose — do not use JSON structure.`;
 }
 
 function generateDiversityReviewerPrompt(businessProfile: any) {
   let budgetCap = businessProfile?.monthly_ad_budget ? `${businessProfile.monthly_ad_budget} ${businessProfile.currency || 'USD'}` : 'Not provided';
   return `You are the Creative Diversity Auditor.
-Your job is to contextually audit the diversity of ad angles, hooks, and formats based on budget scale (Cap: ${budgetCap}).
-- CONSTRUCTIVE ALTERNATIVE: Offer a constructive recommendation for creative format balance.
+Your job is to contextually audit the diversity of ad angles, hooks, and formats based on budget scale (Budget Cap: ${budgetCap}).
 
-Respond ONLY with a JSON object:
-{
-  "verdict": "PASS" | "FAIL",
-  "internal_thought": "Write 1-2 paragraphs of natural, first-person narrative thought evaluating the creative diversity contextually",
-  "feedback": "Detailed explanation of creative diversity improvements needed if verdict is FAIL",
-  "alternative_recommendation": "Constructive creative diversity recommendation"
-}`;
+Evaluate whether the creative mix is appropriately diverse for the budget level — a micro-budget should not be spread across too many formats, while a larger budget should explore multiple angles.
+
+Guidelines:
+- Offer constructive recommendations for creative format balance only if genuinely needed.
+- If there is genuinely no need for this review based on the user's prompt and previous stages, simply respond with: "Reviewer job not required."
+
+Write your evaluation as natural prose — do not use JSON structure.`;
 }
 
 function generateComplianceReviewerPrompt(businessProfile: any) {
   return `You are the Technical Operations & Compliance Auditor.
-Audit tool execution, compliance with Meta policies, and operational safety.
-- CONSTRUCTIVE ALTERNATIVE: Offer a constructive policy/safety safeguard recommendation.
+Audit tool execution, compliance with Meta ad policies, and operational safety.
 
-Respond ONLY with a JSON object:
-{
-  "verdict": "PASS" | "FAIL",
-  "internal_thought": "Write 1-2 paragraphs of natural, first-person narrative thought evaluating execution safety and policy compliance",
-  "feedback": "Detailed explanation of compliance or tool safety failures if verdict is FAIL",
-  "alternative_recommendation": "Constructive policy/safety safeguard recommendation"
-}`;
+Guidelines:
+- Offer constructive policy or safety safeguard recommendations only if genuinely needed.
+- If there is genuinely no need for this review based on the user's prompt and previous stages, simply respond with: "Reviewer job not required."
+
+Write your evaluation as natural prose — do not use JSON structure.`;
 }
 
 function generatePerformanceReviewerPrompt(businessProfile: any) {
   let currency = businessProfile?.currency || 'PKR';
   return `You are the VP of Finance & Growth Reviewer.
-Audit budget pacing, currency integrity (${currency}), and expected ROAS economics.
-- CONSTRUCTIVE ALTERNATIVE: Offer a constructive financial pacing or allocation recommendation.
+Your job is to deeply understand and evaluate every financial aspect of the proposed strategy.
 
-Respond ONLY with a JSON object:
-{
-  "verdict": "PASS" | "FAIL",
-  "internal_thought": "Write 1-2 paragraphs of natural, first-person narrative thought evaluating the budget and performance expectations",
-  "feedback": "Detailed explanation of financial pacing improvements needed if verdict is FAIL",
-  "alternative_recommendation": "Constructive budget pacing or financial recommendation"
-}`;
+Audit areas:
+- Budget pacing logic and daily/total wallet allocation
+- Currency integrity (all figures should be in ${currency} unless explicitly converted)
+- Expected ROAS economics and CPA viability given the market and product
+- Margin analysis and break-even calculations if applicable
+- Whether the financial strategy is realistic and sustainable for the business stage
+
+Guidelines:
+- Provide constructive financial pacing or allocation recommendations only if genuinely needed and grounded in clear reasoning.
+- Do not make decisions or provide feedback if there is no financial concern to address — simply confirm the strategy is financially sound.
+- If there is genuinely no need for this review based on the user's prompt and previous stages, simply respond with: "Reviewer job not required."
+
+Write your evaluation as natural prose — do not use JSON structure.`;
 }
 
 function generateSynthesizerPrompt(businessProfile: any) {
@@ -577,15 +622,13 @@ BUSINESS CONTEXT:
 - Industry: ${businessProfile.industry}
 - Description: ${businessProfile.business_description}
 - Market: ${businessProfile.country} (${businessProfile.currency})
-- Target CPA: ${businessProfile.target_cpa ? businessProfile.target_cpa + ' ' + (businessProfile.currency || 'USD') : 'Not provided'}
-- Target ROAS: ${businessProfile.target_roas ? businessProfile.target_roas + 'x' : 'Not provided'}
-- Budget Cap: ${businessProfile.monthly_ad_budget ? businessProfile.monthly_ad_budget + ' ' + (businessProfile.currency || 'USD') + '/mo' : 'Not provided'}
+- Budget Cap: ${businessProfile.monthly_ad_budget ? businessProfile.monthly_ad_budget + ' ' + (businessProfile.currency || 'USD') + '/mo' : 'Not provided in business profile'}
 - Stage: ${businessProfile.business_stage}
 - Additional Rules: ${businessProfile.additional_context || 'None'}
 `;
   }
 
-  return `You are MetaAgent AI, a highly advanced autonomous Meta Ads optimization agent capable of deep contextual reasoning.
+  return `You are MetaAgent AI, a highly advanced autonomous Meta Ads optimization agent capable of deep contextual reasoning, when needed according to user prompt and if the conversation.brain provides explanation of major stages.
 
 ${profileContext}
 
@@ -604,9 +647,10 @@ If the user asks a strategic question ("what should I do?", "how should I spend?
 - Recommend one option and explain why
 - Ask the user to confirm before you build anything
 - Do NOT just fire off create_campaign immediately
+- In often cases users are dependent on you, so while advising you should be confident like a caring parent but being honest with no false hopes
 
 ### When to Immediately Create Things
-If the user gives you a SPECIFIC directive ("create a campaign named X with budget Y"), then act directly. But still explain your reasoning briefly.
+If the user gives you a SPECIFIC directive ("create a campaign named X with budget Y"), then act directly using tools. Or if the user is leaning towards a specific action or plan and is not able to move on, nudge them forward. Even when doing things immediately, you should provide a very short, clear direction of results this action can generate honestly — whether good or bad.
 
 ## Temporal Discipline (CRITICAL)
 You MUST check the \`age_days\` of every item before reasoning about it.
@@ -1272,24 +1316,27 @@ serve(async (req) => {
         })
         if (!plannerRes.ok) throw new Error(await plannerRes.text())
         const plannerData = await plannerRes.json()
-        const rawContent = plannerData.choices[0].message.content || '{}'
+        const rawContent = plannerData.choices[0].message.content || ''
         
-        const cleanContent = rawContent.replace(/```json/g, '').replace(/```/g, '').trim()
-        planJson = JSON.parse(cleanContent)
-        
-        if (planJson.internal_monologue) {
-          thinkingSteps.push(`💭 Strategic Planner Monologue:\n"${planJson.internal_monologue}"`)
-        } else {
-          thinkingSteps.push(`💭 Strategic Planner Monologue:\n"Analyzing budget scale: Calculating dynamic budget pacing and optimal account structure in ${planJson.currency || 'PKR'}. Formulating growth strategy."`)
+        // Raw text intent detection (no JSON parsing)
+        const plannerThinking = rawContent.trim()
+        const isConversational = plannerThinking.toUpperCase().startsWith('CONVERSATIONAL:')
+        planJson = {
+          intent: isConversational ? 'CONVERSATION' : 'CAMPAIGN_STRATEGY',
+          raw_thinking: plannerThinking,
+          conversational_response: isConversational ? plannerThinking.replace(/^CONVERSATIONAL:\s*/i, '') : '',
+          currency: businessProfile?.currency || 'PKR'
         }
+        
+        thinkingSteps.push(`💭 Strategic Planner Thinking (${isConversational ? 'Conversational' : 'Strategic'}):\n"${plannerThinking.substring(0, 300)}..."`)
       } catch (err: any) {
         console.error('Planner phase failed, using fallback:', err.message)
         thinkingSteps.push('[Planning] Strategic planner phase encountered an error. Proceeding with fallback plan.')
         planJson = {
-          currency: businessProfile?.currency || 'PKR',
-          strategic_blueprint: "Standard growth strategy: Campaign (Sales), Ad Sets, Ad Creatives matched to user budget scale.",
-          subtasks: ["Understand budget constraints", "Analyze competitors", "Design standard growth campaign"],
-          key_questions: ["What exact product are you selling?"]
+          intent: 'CAMPAIGN_STRATEGY',
+          raw_thinking: 'STRATEGIC: Standard growth strategy analysis. Campaign (Sales), Ad Sets, Ad Creatives matched to user budget scale.',
+          conversational_response: '',
+          currency: businessProfile?.currency || 'PKR'
         }
       }
 
@@ -1303,48 +1350,45 @@ serve(async (req) => {
           goal: prompt,
           classified_dimensions: dimensions,
           currency: planJson.currency || businessProfile?.currency || 'PKR',
-          planner_blueprint: planJson.strategic_blueprint,
-          subtasks: planJson.subtasks || [],
+          planner_thinking: planJson.raw_thinking,
+          pre_execution_plan: '',
           evidence: [],
           strategy_proposal: '',
           expert_contributions: []
         }
 
-        // ===== PHASE 1.5: Pre-Execution Plan Reviewer =====
-        thinkingSteps.push('🛡️ Pre-Execution: Planning Reviewer auditing strategic blueprint before research...')
+        // ===== PHASE 1.5: Pre-Execution Plan Generator =====
+        thinkingSteps.push('🛡️ Pre-Execution: Plan Generator forming strategic blueprint from Planner thinking...')
         try {
           const reqDetails = getLLMRequestDetails(openRouterKey, model)
-          const planReviewRes = await fetch(reqDetails.url, {
+          const planGenRes = await fetch(reqDetails.url, {
             method: 'POST',
             headers: reqDetails.headers,
             body: JSON.stringify({
               model: reqDetails.model,
-              max_tokens: reviewerMaxTokens,
+              max_tokens: maxTokens,
               messages: [
-                { role: 'system', content: generatePreExecutionPlanReviewerPrompt(businessProfile) },
-                { role: 'user', content: `Blueprint to audit: ${planJson.strategic_blueprint}\nSubtasks: ${JSON.stringify(planJson.subtasks)}` }
+                { role: 'system', content: generatePreExecutionPlanGeneratorPrompt(businessProfile) },
+                { role: 'user', content: `## Planner's Deep Thinking\nThe Strategic Planner analyzed the user's request and produced the following first-principles thinking:\n\n${conversationBrain.planner_thinking}\n\n## User's Original Prompt\nThis was the user's original request on which the Planner generated the above thinking:\n\n${prompt}` }
               ]
             })
           })
-          if (planReviewRes.ok) {
-            const data = await planReviewRes.json()
-            const clean = (data.choices[0].message.content || '{}').replace(/```json/g, '').replace(/```/g, '').trim()
-            const parsed = JSON.parse(clean)
-            if (parsed.verdict === 'FAIL' && parsed.corrected_blueprint) {
-              conversationBrain.planner_blueprint = parsed.corrected_blueprint
-              thinkingSteps.push('🛡️ Pre-Execution Plan Reviewer: Flaws detected. Upgraded blueprint before research.')
-            } else {
-              thinkingSteps.push('🛡️ Pre-Execution Plan Reviewer: Blueprint validated (PASS).')
-            }
+          if (planGenRes.ok) {
+            const data = await planGenRes.json()
+            conversationBrain.pre_execution_plan = data.choices[0].message.content || conversationBrain.planner_thinking
+            thinkingSteps.push('🛡️ Pre-Execution Plan Generator: Strategic blueprint formed successfully.')
+          } else {
+            conversationBrain.pre_execution_plan = conversationBrain.planner_thinking
           }
         } catch (err: any) {
-          console.error('Pre-execution plan reviewer error:', err.message)
+          console.error('Pre-execution plan generator error:', err.message)
+          conversationBrain.pre_execution_plan = conversationBrain.planner_thinking
         }
 
         // ===== PHASE 2: Research Agent (Evidence Gathering) =====
         thinkingSteps.push('🔬 Phase 2: Research Agent gathering evidence and live ad account metrics...')
         const researchMessages: any[] = [
-          { role: 'system', content: generateResearchAgentPrompt(businessProfile) + `\n\nSUBTASKS TO RESEARCH:\n${JSON.stringify(conversationBrain.subtasks)}` },
+          { role: 'system', content: generateResearchAgentPrompt(businessProfile) + `\n\nSTRATEGIC PLAN TO RESEARCH:\n${conversationBrain.pre_execution_plan}` },
           ...history
         ]
 
@@ -1412,18 +1456,18 @@ serve(async (req) => {
               max_tokens: maxTokens,
               messages: [
                 { role: 'system', content: generateStrategyAgentPrompt(businessProfile) },
-                { role: 'user', content: `## SHARED WORKING MEMORY:\n- User Goal: ${prompt}\n- Validated Blueprint: ${conversationBrain.planner_blueprint}\n- Classified Dimensions: ${JSON.stringify(conversationBrain.classified_dimensions)}\n- Knowledge Context:\n${knowledgeContext}\n- Gathered Research Evidence:\n${JSON.stringify(conversationBrain.evidence, null, 2)}\n\nFormulate the core masterclass strategy in markdown.` }
+                { role: 'user', content: `## COMPLETE CONTEXT CHAIN:\n\n### 1. User's Original Request\n${prompt}\n\n### 2. Strategic Planner's First-Principles Thinking\nThis was generated by the Strategic Planner who performed deep first-principles reasoning about the user's request:\n${conversationBrain.planner_thinking}\n\n### 3. Pre-Execution Plan Generator's Strategic Blueprint\nThis plan was proposed by the Pre-Execution Plan Generator BEFORE the research agent performed its job. It was built on the Planner's thinking but without live account data:\n${conversationBrain.pre_execution_plan}\n\n### 4. Research Agent's Gathered Evidence\nThis data was gathered by the Research Agent which was assigned to collect live empirical evidence from the user's ad account:\n${JSON.stringify(conversationBrain.evidence, null, 2)}\n\n### 5. Marketing Knowledge Context\n${knowledgeContext}\n\n### 6. Classified Dimensions\n${JSON.stringify(conversationBrain.classified_dimensions)}\n\nFormulate or refine the core masterclass strategy based on all of the above.` }
               ]
             })
           })
           if (strategyRes.ok) {
             const data = await strategyRes.json()
-            conversationBrain.strategy_proposal = data.choices[0].message.content || conversationBrain.planner_blueprint
+            conversationBrain.strategy_proposal = data.choices[0].message.content || conversationBrain.pre_execution_plan
             thinkingSteps.push('🧠 Master Strategy Agent formulated comprehensive strategy proposal.')
           }
         } catch (err: any) {
           console.error('Strategy Agent failed:', err.message)
-          conversationBrain.strategy_proposal = conversationBrain.planner_blueprint
+          conversationBrain.strategy_proposal = conversationBrain.pre_execution_plan
         }
 
         // ===== PHASE 4: Board of Constructive Expert Debaters =====
@@ -1448,33 +1492,32 @@ serve(async (req) => {
                 max_tokens: reviewerMaxTokens,
                 messages: [
                   { role: 'system', content: config.promptFn(businessProfile) },
-                  { role: 'user', content: `Strategy Proposal: ${conversationBrain.strategy_proposal}\nResearch Evidence: ${JSON.stringify(conversationBrain.evidence)}` }
+                  { role: 'user', content: `User's Original Request: ${prompt}\n\nStrategy Proposal to Review:\n${conversationBrain.strategy_proposal}\n\nResearch Evidence:\n${JSON.stringify(conversationBrain.evidence)}` }
                 ]
               })
             })
             if (!reviewerRes.ok) throw new Error(await reviewerRes.text())
             const data = await reviewerRes.json()
-            const clean = (data.choices[0].message.content || '{}').replace(/```json/g, '').replace(/```/g, '').trim()
-            const parsed = JSON.parse(clean)
-            return { role: config.id, label: config.label, ...parsed }
+            const rawReview = data.choices[0].message.content || 'Validated. No concerns.'
+            return { role: config.id, label: config.label, raw_review: rawReview }
           } catch (err: any) {
-            return { role: config.id, label: config.label, verdict: 'PASS', internal_thought: 'Validated strategy.', alternative_recommendation: 'Maintain current vector.' }
+            return { role: config.id, label: config.label, raw_review: 'Validated. No concerns.' }
           }
         })
 
         const reviews = await Promise.all(reviewerPromises)
         for (const r of reviews) {
-          conversationBrain.expert_contributions.push({ expert: r.label, verdict: r.verdict, thought: r.internal_thought, alternative: r.alternative_recommendation })
-          thinkingSteps.push(`${r.label}: "${r.internal_thought || 'Validated.'}"${r.alternative_recommendation ? ` -> Suggestion: "${r.alternative_recommendation}"` : ''}`)
+          conversationBrain.expert_contributions.push({ expert: r.label, review: r.raw_review })
+          thinkingSteps.push(`${r.label}: "${(r.raw_review || 'Validated.').substring(0, 200)}"`)  
         }
 
         // ===== PHASE 5: Execution Worker & Response Agent =====
         thinkingSteps.push('⚡ Phase 5: Response Agent synthesizing Shared Memory into final execution...')
         const responseWorkerPrompt = generateSystemPrompt(businessProfile, historical_context) +
           `\n\n## SHARED WORKING MEMORY (BLACKBOARD STATE):\n` +
-          `- Goal: ${prompt}\n` +
+          `- User's Original Request: ${prompt}\n(This was the user's original request. Everything up to this point has been processed according to this. The user prompt is provided as context only \u2014 do not re-analyze it for new decisions.)\n\n` +
           `- Core Strategy Proposal:\n${conversationBrain.strategy_proposal}\n\n` +
-          `- Expert Contributions & Alternative Recommendations:\n${JSON.stringify(conversationBrain.expert_contributions, null, 2)}\n\n` +
+          `- Expert Contributions & Reviews:\n${conversationBrain.expert_contributions.map((e: any) => `**${e.expert}:** ${e.review}`).join('\n\n')}\n\n` +
           `INSTRUCTIONS: Synthesize all research evidence, core strategy, and expert contributions into a single, masterclass Growth Response. If creation tools (create_campaign, etc.) are needed, execute them now.`;
 
         const responseMessages: any[] = [
@@ -1521,7 +1564,7 @@ serve(async (req) => {
         } 
         
         if (!finalContent || finalContent.trim().length === 0) {
-          finalContent = conversationBrain.strategy_proposal || conversationBrain.planner_blueprint || "Strategy successfully formulated."
+          finalContent = conversationBrain.strategy_proposal || conversationBrain.pre_execution_plan || "Strategy successfully formulated."
         }
 
         if (toolExecutions.length > 0) {
