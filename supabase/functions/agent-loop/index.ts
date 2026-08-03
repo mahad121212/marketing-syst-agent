@@ -1310,6 +1310,7 @@ serve(async (req) => {
             max_tokens: maxTokens,
             messages: [
               { role: 'system', content: generatePlannerPrompt(businessProfile, historical_context) },
+              ...history,
               { role: 'user', content: plannerUserMessage }
             ]
           })
