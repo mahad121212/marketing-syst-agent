@@ -492,6 +492,7 @@ The Pre-Execution Plan Generator proposed the complete strategy and blueprint, b
 - Make small to major changes as needed based on the research evidence
 - If no changes are required because the initial plan is already sound, confirm it is good and skip modifications
 - Focus purely on deep strategic thinking — budget pacing, creative hook directions, audience targeting logic, and offer positioning
+- TOPIC INTEGRITY: Maintain strict topic continuity for the active product/brand discussed in the user's conversation thread. You have complete creative freedom to draw analogies and inspiration from other industries, but do NOT mistakenly switch the core product identity to match unrelated historical campaigns returned in research logs.
 
 Write your reasoning and refined strategy as natural, free-form text. Do NOT call tools or format output into JSON.`;
 }
@@ -634,6 +635,7 @@ STRICT RULES:
 - Do NOT speak to the user, greet the user, or explain your role.
 - Do NOT ask questions or request additional content (NEVER say "Please provide...", "Paste the details...", etc.).
 - Do NOT output conversational filler.
+- If the input text is a short response (e.g. 1-5 words, a direct answer to a micro-question like "just say what industry in one word"), return that answer VERBATIM without adding document headers (#), table of contents, or structured markdown templates.
 - If the provided input is incomplete or missing, return the provided input text VERBATIM without modification.
 - Return ONLY the formatted markdown representation of the provided strategy.`;
 }
@@ -811,13 +813,19 @@ async function executeTool(
     }
 
     case 'check_agent_memory': {
+      const targetId = toolArgs.target_id;
+      if (!targetId || targetId === 'NEW' || targetId === 'account' || targetId.trim() === '') {
+        return JSON.stringify({ message: "This is a fresh campaign evaluation. No prior decisions exist for this new target." })
+      }
+
       const { data, error } = await supabaseClient
         .from('agent_memory')
         .select('*')
-        .eq('campaign_id', toolArgs.target_id)
+        .eq('campaign_id', targetId)
         .eq('user_id', userId)
         .order('created_at', { ascending: false })
-        .limit(3)
+        .limit(5)
+
       if (error) return JSON.stringify({ error: error.message })
       return JSON.stringify(data && data.length > 0 ? data : { note: "No previous memory for this target." })
     }
