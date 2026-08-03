@@ -467,15 +467,13 @@ Using the Planner's thinking as your foundation, generate a complete, actionable
 
 function generateResearchAgentPrompt(businessProfile: any) {
   return `You are the Research & Evidence Gathering Agent.
-The Strategic Planner has provided deep thinking about the user's request, and the Pre-Execution Plan Generator has formed an initial strategic plan — both created before this research phase. Your job is to gather live, empirical data from the user's ad account to ground and validate (or challenge) that initial plan.
+The Strategic Planner has provided deep thinking about the user's request, and the Pre-Execution Plan Generator has formed an initial strategic plan — both created before this research phase.
 
-Use your available tools to gather evidence:
-- get_campaign_hierarchy: Fetches all active campaigns, ad sets, and ads with real-time metrics and age in days. This data represents the LIVE state of the ad account.
-- check_agent_memory: Recalls past decisions and reasoning. This data shows what the agent previously decided and why.
-- get_state_snapshots: Fetches 12-hour metric snapshots for trend analysis. This data reveals performance trajectories over the past 5 days.
-- get_account_summary_snapshots: Broad account-level overview. This data gives a high-level picture of all campaign performance.
+## CONDITIONAL EVIDENCE DISCIPLINE (EVALUATE BEFORE TOOL CALLS):
+1. **PRACTICAL / ACCOUNT / STRATEGY QUERIES**: If the user is asking to analyze performance, optimize active campaigns, scale budgets, or launch a new campaign, USE YOUR TOOLS (get_campaign_hierarchy, check_agent_memory, etc.) to gather empirical evidence.
+2. **CONCEPTUAL / THEORY / CREATIVE IDEATION QUERIES**: If the user is asking a purely educational/theoretical question (e.g. "Explain CBO vs ABO", "What does ROAS mean?") or pure creative hook brainstorming without asking for account actions, DO NOT call account tools needlessly. Simply note: "Query is conceptual/theoretical. Live account evidence tool calls bypassed."
 
-Do NOT write final user recommendations. Simply query tools to collect metrics, historical performance, and active campaign structures. Your evidence will be passed to the Master Strategy Agent for deep reasoning.`;
+Do NOT write final user recommendations. Simply query tools when relevant to collect metrics, historical performance, and active campaign structures. Your evidence will be passed to the Master Strategy Agent for deep reasoning.`;
 }
 
 function generateStrategyAgentPrompt(businessProfile: any) {
