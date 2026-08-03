@@ -296,6 +296,30 @@ function classifyUserIntent(prompt: string, businessProfile: any, campaignCount:
   }
 }
 
+function isPurelyConversationalPrompt(prompt: string): boolean {
+  const p = prompt.trim().toLowerCase().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, '')
+  
+  // Exact or pattern matches for pure acknowledgments, thanks, greetings
+  const conversationalRegex = /^(ok|okay|got it|cool|great|awesome|nice|perfect|sure|understood|alright|thank you|thanks|thx|tysm|hi|hello|hey|good morning|good afternoon|good evening|sounds good|looks good)( (thanks|thank you|for (telling me|the info|the help|sharing|explaining|the detailed plan|the advice)))?$/i
+
+  if (conversationalRegex.test(p)) return true
+
+  // If prompt is very short (<= 6 words) AND contains zero marketing/campaign directives
+  const words = p.split(/\s+/)
+  if (words.length <= 6) {
+    const strategicKeywords = ['campaign', 'ad', 'set', 'budget', 'scale', 'pause', 'create', 'launch', 'roas', 'cpa', 'target', 'pkr', 'usd', 'rs', 'rupees', 'dollar', 'option', 'strategy', 'plan', 'audience', 'convert', 'sales']
+    const hasDirective = strategicKeywords.some(kw => p.includes(kw))
+    if (!hasDirective) {
+      const pleasantryKeywords = ['thanks', 'thank', 'ok', 'okay', 'got', 'cool', 'great', 'awesome', 'nice', 'perfect', 'sure', 'understood', 'alright', 'hi', 'hello', 'hey', 'good']
+      if (pleasantryKeywords.some(kw => p.includes(kw))) {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
 async function retrieveKnowledge(supabaseClient: any, dimensions: any): Promise<string> {
   try {
     const { data: allKnowledge, error } = await supabaseClient
@@ -406,12 +430,17 @@ ${toolContext}
    - Think through a detailed strategic direction covering budget pacing logic, creative hook themes, average order value leverage, and post-launch decision trees.
    - Your thinking will be used by a plan generator to form an actionable blueprint, then a research agent will gather live account data, and finally a strategy reasoner will refine everything into the final response. Think broadly and deeply — your reasoning sets the foundation for the entire pipeline.
 
-## Intent Awareness
-At the very beginning of your response, clearly state one of these two lines:
-- "STRATEGIC: " followed by your thinking (if the user is asking for campaign strategy, ad plan, creation, optimization, or any marketing action).
-- "CONVERSATIONAL: " followed by your direct answer (if the user is just asking a general question, having a casual follow-up, or asking something non-strategic).
+## Intent Awareness (CRITICAL CLASSIFICATION RULE)
+At the very beginning of your response, you MUST state one of these two lines:
+- "CONVERSATIONAL: " followed by a brief, warm 1-2 sentence response.
+- "STRATEGIC: " followed by your full first-principles thinking narrative.
 
-If conversational, provide a direct, helpful, conversational answer and stop there.
+You MUST choose "CONVERSATIONAL: " if:
+1. The user's message is a thank-you, acknowledgment, greeting, or simple pleasantry (e.g. "ok thanks for telling me", "got it", "sounds good", "cool", "thank you", "hello").
+2. The user is NOT asking you to plan, create, analyze, optimize, scale, pause, or change anything.
+3. EVEN IF THERE IS EXTENSIVE CAMPAIGN HISTORY IN THE CHAT, a simple acknowledgment or non-directive message MUST be classified as CONVERSATIONAL. Do NOT over-interpret simple acknowledgments as a request to continue campaign strategy or schedule goals.
+
+If conversational, provide a warm, direct 1-2 sentence answer (e.g. "CONVERSATIONAL: You're very welcome! I'm here whenever you're ready to review options or launch the campaign.") and stop there. Do NOT output any strategic thinking.
 If strategic, write your full first-person thinking narrative — reason about the budget, the market, the audience, creative direction, campaign structure, what tools and data would be needed, and what the optimal approach looks like. Think freely and deeply. Do not constrain your output to any structured format.`;
 }
 
@@ -1300,44 +1329,55 @@ serve(async (req) => {
       thinkingSteps.push('[Planning] Strategic planner analyzing requirements with knowledge context...')
       
       let planJson: any = null
-      try {
-        const reqDetails = getLLMRequestDetails(openRouterKey, model)
-        const plannerRes = await fetch(reqDetails.url, {
-          method: 'POST',
-          headers: reqDetails.headers,
-          body: JSON.stringify({
-            model: reqDetails.model,
-            max_tokens: maxTokens,
-            messages: [
-              { role: 'system', content: generatePlannerPrompt(businessProfile, historical_context) },
-              ...history,
-              { role: 'user', content: plannerUserMessage }
-            ]
-          })
-        })
-        if (!plannerRes.ok) throw new Error(await plannerRes.text())
-        const plannerData = await plannerRes.json()
-        const rawContent = plannerData.choices[0].message.content || ''
-        
-        // Raw text intent detection (no JSON parsing)
-        const plannerThinking = rawContent.trim()
-        const isConversational = plannerThinking.toUpperCase().startsWith('CONVERSATIONAL:')
+
+      if (isPurelyConversationalPrompt(prompt)) {
+        thinkingSteps.push('💬 Pure conversational acknowledgment detected by pre-filter. Bypassing strategic deep dive.')
         planJson = {
-          intent: isConversational ? 'CONVERSATION' : 'CAMPAIGN_STRATEGY',
-          raw_thinking: plannerThinking,
-          conversational_response: isConversational ? plannerThinking.replace(/^CONVERSATIONAL:\s*/i, '') : '',
+          intent: 'CONVERSATION',
+          raw_thinking: 'CONVERSATIONAL: Pure conversational acknowledgment detected.',
+          conversational_response: "You're very welcome! I'm here whenever you're ready to review campaign options, optimize performance, or take next steps.",
           currency: businessProfile?.currency || 'PKR'
         }
-        
-        thinkingSteps.push(`💭 Strategic Planner Thinking (${isConversational ? 'Conversational' : 'Strategic'}):\n"${plannerThinking.substring(0, 300)}..."`)
-      } catch (err: any) {
-        console.error('Planner phase failed, using fallback:', err.message)
-        thinkingSteps.push('[Planning] Strategic planner phase encountered an error. Proceeding with fallback plan.')
-        planJson = {
-          intent: 'CAMPAIGN_STRATEGY',
-          raw_thinking: 'STRATEGIC: Standard growth strategy analysis. Campaign (Sales), Ad Sets, Ad Creatives matched to user budget scale.',
-          conversational_response: '',
-          currency: businessProfile?.currency || 'PKR'
+      } else {
+        try {
+          const reqDetails = getLLMRequestDetails(openRouterKey, model)
+          const plannerRes = await fetch(reqDetails.url, {
+            method: 'POST',
+            headers: reqDetails.headers,
+            body: JSON.stringify({
+              model: reqDetails.model,
+              max_tokens: maxTokens,
+              messages: [
+                { role: 'system', content: generatePlannerPrompt(businessProfile, historical_context) },
+                ...history,
+                { role: 'user', content: plannerUserMessage }
+              ]
+            })
+          })
+          if (!plannerRes.ok) throw new Error(await plannerRes.text())
+          const plannerData = await plannerRes.json()
+          const rawContent = plannerData.choices[0].message.content || ''
+          
+          // Raw text intent detection (no JSON parsing)
+          const plannerThinking = rawContent.trim()
+          const isConversational = plannerThinking.toUpperCase().startsWith('CONVERSATIONAL:')
+          planJson = {
+            intent: isConversational ? 'CONVERSATION' : 'CAMPAIGN_STRATEGY',
+            raw_thinking: plannerThinking,
+            conversational_response: isConversational ? plannerThinking.replace(/^CONVERSATIONAL:\s*/i, '') : '',
+            currency: businessProfile?.currency || 'PKR'
+          }
+          
+          thinkingSteps.push(`💭 Strategic Planner Thinking (${isConversational ? 'Conversational' : 'Strategic'}):\n"${plannerThinking.substring(0, 300)}..."`)
+        } catch (err: any) {
+          console.error('Planner phase failed, using fallback:', err.message)
+          thinkingSteps.push('[Planning] Strategic planner phase encountered an error. Proceeding with fallback plan.')
+          planJson = {
+            intent: 'CAMPAIGN_STRATEGY',
+            raw_thinking: 'STRATEGIC: Standard growth strategy analysis. Campaign (Sales), Ad Sets, Ad Creatives matched to user budget scale.',
+            conversational_response: '',
+            currency: businessProfile?.currency || 'PKR'
+          }
         }
       }
 
