@@ -22,51 +22,8 @@ export const App: React.FC = () => {
   const [chatSessions, setChatSessions] = useState<{ id: string; title: string; updated_at: string }[]>([]);
   const [reasoningMode, setReasoningMode] = useState<'fast' | 'deep'>('fast');
 
-  // Initial Mock Campaigns
-  const [campaigns, setCampaigns] = useState<Campaign[]>([
-    {
-      id: 'c-1',
-      name: 'Q3 Luxury Skincare Broad',
-      objective: 'CONVERSIONS',
-      status: 'ACTIVE',
-      budget: 150,
-      spent: 1420.50,
-      roas: 3.85,
-      cpa: 28.40,
-      clicks: 3420,
-      conversions: 50,
-      targetAudience: 'Broad Women 25-45 Interest: Skincare',
-      createdAt: '2026-07-15',
-    },
-    {
-      id: 'c-2',
-      name: 'Retargeting Website Visitors 30d',
-      objective: 'CONVERSIONS',
-      status: 'ACTIVE',
-      budget: 80,
-      spent: 890.00,
-      roas: 4.60,
-      cpa: 21.10,
-      clicks: 1250,
-      conversions: 42,
-      targetAudience: 'Custom Audience: 30-day Site Visitors',
-      createdAt: '2026-07-18',
-    },
-    {
-      id: 'c-3',
-      name: 'New Product Test - Serum Carousel',
-      objective: 'TRAFFIC',
-      status: 'LEARNING',
-      budget: 50,
-      spent: 210.00,
-      roas: 1.80,
-      cpa: 48.00,
-      clicks: 890,
-      conversions: 4,
-      targetAudience: 'Lookalike 1% Active Buyers',
-      createdAt: '2026-07-21',
-    },
-  ]);
+  // Initial Campaigns (Live mode — no mock data)
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
 
   // Initial Agent Chat Messages
   const [messages, setMessages] = useState<AgentMessage[]>([]);

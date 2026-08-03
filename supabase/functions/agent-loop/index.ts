@@ -299,18 +299,18 @@ function classifyUserIntent(prompt: string, businessProfile: any, campaignCount:
 function isPurelyConversationalPrompt(prompt: string): boolean {
   const p = prompt.trim().toLowerCase().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, '')
   
-  // Exact or pattern matches for pure acknowledgments, thanks, greetings
-  const conversationalRegex = /^(ok|okay|got it|cool|great|awesome|nice|perfect|sure|understood|alright|thank you|thanks|thx|tysm|hi|hello|hey|good morning|good afternoon|good evening|sounds good|looks good)( (thanks|thank you|for (telling me|the info|the help|sharing|explaining|the detailed plan|the advice)))?$/i
+  // Exact or pattern matches for pure acknowledgments, compliments, thanks, greetings
+  const conversationalRegex = /^(ok|okay|got it|cool|great|awesome|nice|perfect|sure|understood|alright|thank you|thanks|thx|tysm|hi|hello|hey|good morning|good afternoon|good evening|sounds good|looks good|thats amazing|that is amazing|thats great|that is great|thats awesome|that is awesome|love it|wonderful|brilliant|fantastic|nice work|good job)( (thanks|thank you|for (telling me|the info|the help|sharing|explaining|the detailed plan|the advice)))?$/i
 
   if (conversationalRegex.test(p)) return true
 
   // If prompt is very short (<= 6 words) AND contains zero marketing/campaign directives
   const words = p.split(/\s+/)
   if (words.length <= 6) {
-    const strategicKeywords = ['campaign', 'ad', 'set', 'budget', 'scale', 'pause', 'create', 'launch', 'roas', 'cpa', 'target', 'pkr', 'usd', 'rs', 'rupees', 'dollar', 'option', 'strategy', 'plan', 'audience', 'convert', 'sales']
+    const strategicKeywords = ['campaign', 'ad', 'set', 'budget', 'scale', 'pause', 'create', 'launch', 'roas', 'cpa', 'target', 'pkr', 'usd', 'rs', 'rupees', 'dollar', 'option', 'strategy', 'plan', 'audience', 'convert', 'sales', 'how', 'what', 'when', 'where', 'why', 'who', 'run']
     const hasDirective = strategicKeywords.some(kw => p.includes(kw))
     if (!hasDirective) {
-      const pleasantryKeywords = ['thanks', 'thank', 'ok', 'okay', 'got', 'cool', 'great', 'awesome', 'nice', 'perfect', 'sure', 'understood', 'alright', 'hi', 'hello', 'hey', 'good']
+      const pleasantryKeywords = ['thanks', 'thank', 'ok', 'okay', 'got', 'cool', 'great', 'awesome', 'nice', 'perfect', 'sure', 'understood', 'alright', 'hi', 'hello', 'hey', 'good', 'amazing', 'love', 'wonderful', 'brilliant']
       if (pleasantryKeywords.some(kw => p.includes(kw))) {
         return true
       }
