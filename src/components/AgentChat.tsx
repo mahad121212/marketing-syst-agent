@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, Sparkles, CheckCircle2, AlertCircle, Wrench, ChevronDown, ChevronRight, Play, Plus, MessageSquare, Trash2, Clock, Target, X, Calendar, Eye } from 'lucide-react';
 import { AgentMessage } from '../types';
 import { supabase } from '../lib/supabase';
+import { FormattedMarkdown } from './FormattedMarkdown';
 
 const LiveProcessLoader: React.FC<{ reasoningMode: 'fast' | 'deep' }> = ({ reasoningMode }) => {
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
@@ -472,11 +473,11 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                       border: msg.sender === 'user' ? 'none' : '1px solid rgba(255, 255, 255, 0.08)',
                       fontSize: '14px',
                       lineHeight: '1.6',
-                      whiteSpace: 'pre-wrap',
+                      whiteSpace: msg.sender === 'user' ? 'pre-wrap' : 'normal',
                       fontWeight: msg.sender === 'user' ? 600 : 400,
                     }}
                   >
-                    {msg.content}
+                    {isAgent ? <FormattedMarkdown content={msg.content} /> : msg.content}
                   </div>
 
                   {/* Dynamic rendering for single or multiple proposals */}
