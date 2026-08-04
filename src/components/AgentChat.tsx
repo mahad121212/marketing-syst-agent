@@ -483,9 +483,17 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                             }
 
                             const cardId = `${msg.id}_step_${idx}_${audit.id || idx}`;
-                            const isExpanded = expandedStageCards[cardId] ?? true; // Default expanded for instant diagnostic inspection
+                            const isExpanded = expandedStageCards[cardId] ?? false; // Collapsed by default for a clean, un-cluttered list
                             const isTool = audit.phase.includes('TOOL') || !!audit.tool_name;
                             const isSkipped = audit.status === 'SKIPPED';
+
+                            // Format raw output: Pretty print if JSON
+                            let formattedRawOutput = audit.raw_output || '';
+                            if (typeof formattedRawOutput === 'string' && formattedRawOutput.trim().startsWith('{') || formattedRawOutput.trim().startsWith('[')) {
+                              try {
+                                formattedRawOutput = JSON.stringify(JSON.parse(formattedRawOutput), null, 2);
+                              } catch (e) {}
+                            }
 
                             return (
                               <div
@@ -553,13 +561,13 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                                     )}
 
                                     {/* Raw Output / Reasoning */}
-                                    {audit.raw_output && (
+                                    {formattedRawOutput && (
                                       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                                         <div style={{ fontSize: '11px', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                                           🧠 Raw Stage Output & Reasoning (Untruncated)
                                         </div>
-                                        <div style={{ padding: '12px', backgroundColor: 'rgba(0, 0, 0, 0.35)', border: '1px solid rgba(255, 255, 255, 0.05)', borderRadius: '6px', color: '#e5e7eb', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace', fontSize: '11px', lineHeight: '1.6', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                                          {audit.raw_output}
+                                        <div style={{ padding: '12px', backgroundColor: 'rgba(0, 0, 0, 0.35)', border: '1px solid rgba(255, 255, 255, 0.05)', borderRadius: '6px', color: '#e5e7eb', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace', fontSize: '11px', lineHeight: '1.6', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '400px', overflowY: 'auto' }}>
+                                          {formattedRawOutput}
                                         </div>
                                       </div>
                                     )}
