@@ -795,72 +795,60 @@ async function executeTool(
 ): Promise<string> {
   switch (toolName) {
     case 'get_campaign_hierarchy': {
-      const { data: userCampaigns } = await supabaseClient
-        .from('campaigns')
-        .select('*')
-        .eq('user_id', userId)
-
-      if (userCampaigns && userCampaigns.length > 0) {
-        const hierarchy: any[] = []
-
-        for (const campaign of userCampaigns) {
-          const { data: adSets } = await supabaseClient
-            .from('ad_sets')
-            .select('*')
-            .eq('campaign_id', campaign.id)
-
-          const adSetsWithAds: any[] = []
-          for (const adSet of (adSets || [])) {
-            const { data: ads } = await supabaseClient
-              .from('ads')
-              .select('*')
-              .eq('ad_set_id', adSet.id)
-
-            adSetsWithAds.push({
-              ...adSet,
-              ads: ads || []
-            })
-          }
-
-          hierarchy.push({
-            ...campaign,
-            ad_sets: adSetsWithAds
-          })
-        }
-
-        return JSON.stringify(hierarchy)
+      if (!metaToken || !metaAdAccountId) {
+        return JSON.stringify({ 
+          error: "META_API_DISCONNECTED",
+          message: "Meta Ad Account is not connected. Please configure your Meta Access Token and Ad Account ID in Settings."
+        });
       }
 
-      if (metaToken && metaAdAccountId) {
-        try {
-          const formattedAccountId = metaAdAccountId.startsWith('act_') ? metaAdAccountId : `act_${metaAdAccountId}`;
-          const url = `https://graph.facebook.com/v19.0/${formattedAccountId}/campaigns?fields=id,name,status,daily_budget,objective,adsets{id,name,status,daily_budget,targeting,insights{spend,impressions,clicks,cpc,cpm,ctr}},insights{spend,impressions,clicks,cpc,cpm,ctr}&access_token=${metaToken}`;
-          
-          const metaRes = await fetch(url);
-          if (metaRes.ok) {
-            const metaJson = await metaRes.json();
-            const liveHierarchy = (metaJson.data || []).map((c: any) => {
-              const cInsights = c.insights?.data?.[0] || {};
-              return {
-                id: c.id,
-                name: c.name,
-                status: c.status,
-                daily_budget: c.daily_budget ? Number(c.daily_budget) / 100 : undefined,
-                objective: c.objective,
-                performance_metrics: {
-                  spend: Number(cInsights.spend || 0),
-                  impressions: Number(cInsights.impressions || 0),
-                  clicks: Number(cInsights.clicks || 0),
-                  cpc: Number(cInsights.cpc || 0),
-                  cpm: Number(cInsights.cpm || 0),
-                  ctr: Number(cInsights.ctr || 0)
-                },
-                ad_sets: c.adsets?.data?.map((s: any) => {
+      try {
+        const formattedAccountId = metaAdAccountId.startsWith('act_') ? metaAdAccountId : `act_${metaAdAccountId}`;
+        const filteringParam = encodeURIComponent(JSON.stringify([{ field: 'effective_status', operator: 'IN', value: ['ACTIVE', 'PAUSED'] }]));
+        const url = `https://graph.facebook.com/v19.0/${formattedAccountId}/campaigns?fields=id,name,status,effective_status,daily_budget,lifetime_budget,objective,adsets{id,name,status,effective_status,daily_budget,targeting,insights{spend,impressions,clicks,cpc,cpm,ctr}},insights{spend,impressions,clicks,cpc,cpm,ctr}&filtering=${filteringParam}&access_token=${metaToken}`;
+        
+        const metaRes = await fetch(url);
+        if (!metaRes.ok) {
+          const errText = await metaRes.text();
+          return JSON.stringify({ 
+            error: "META_GRAPH_API_ERROR",
+            status_code: metaRes.status,
+            meta_response: errText,
+            message: `Meta Graph API returned error status ${metaRes.status}: ${errText}`
+          });
+        }
+
+        const metaJson = await metaRes.json();
+        if (!metaJson.data) {
+          return JSON.stringify({ data_source: 'LIVE_META_GRAPH_API', hierarchy: [] });
+        }
+
+        const liveHierarchy = metaJson.data
+          .filter((c: any) => c.effective_status !== 'DELETED' && c.effective_status !== 'ARCHIVED')
+          .map((c: any) => {
+            const cInsights = c.insights?.data?.[0] || {};
+            return {
+              id: c.id,
+              name: c.name,
+              status: c.status || c.effective_status,
+              daily_budget: c.daily_budget ? Number(c.daily_budget) / 100 : undefined,
+              objective: c.objective,
+              performance_metrics: {
+                spend: Number(cInsights.spend || 0),
+                impressions: Number(cInsights.impressions || 0),
+                clicks: Number(cInsights.clicks || 0),
+                cpc: Number(cInsights.cpc || 0),
+                cpm: Number(cInsights.cpm || 0),
+                ctr: Number(cInsights.ctr || 0)
+              },
+              ad_sets: c.adsets?.data
+                ?.filter((s: any) => s.effective_status !== 'DELETED' && s.effective_status !== 'ARCHIVED')
+                ?.map((s: any) => {
                   const sInsights = s.insights?.data?.[0] || {};
                   return {
                     id: s.id,
                     name: s.name,
-                    status: s.status,
+                    status: s.status || s.effective_status,
                     daily_budget: s.daily_budget ? Number(s.daily_budget) / 100 : undefined,
                     targeting: s.targeting,
                     performance_metrics: {
@@ -873,17 +861,13 @@ async function executeTool(
                     }
                   };
                 }) || []
-              };
-            });
+            };
+          });
 
-            return JSON.stringify({ data_source: 'LIVE_META_GRAPH_API', hierarchy: liveHierarchy });
-          }
-        } catch (e: any) {
-          console.error("Failed fetching Meta Graph API live fallback:", e.message);
-        }
+        return JSON.stringify({ data_source: 'LIVE_META_GRAPH_API', hierarchy: liveHierarchy });
+      } catch (e: any) {
+        return JSON.stringify({ error: "LIVE_META_NETWORK_EXCEPTION", message: e.message });
       }
-
-      return JSON.stringify([]);
     }
 
     case 'get_state_snapshots': {
@@ -1280,19 +1264,16 @@ async function executeTool(
 }
 
 function isGeminiKey(key: string): boolean {
-  const k = (key || '').trim();
-  return k.startsWith('AIza') || k.length === 39;
+  const k = key.trim()
+  return k.startsWith('AIzaSy') || k.startsWith('AQ.')
 }
 
 function getLLMRequestDetails(key: string, requestedModel: string) {
-  const k = (key || '').trim();
-  const geminiEnv = (Deno.env.get('GEMINI_API_KEY') || '').trim();
-  const openRouterEnv = (Deno.env.get('OPENROUTER_API_KEY') || '').trim();
-
-  if (k && isGeminiKey(k)) {
+  const k = key.trim()
+  if (isGeminiKey(k)) {
     let mappedModel = requestedModel.replace('google/', '').trim();
     if (!mappedModel.includes('gemini') && !mappedModel.includes('gemma')) {
-      mappedModel = 'gemini-2.5-flash';
+      mappedModel = 'gemini-3.6-flash';
     }
     return {
       url: `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`,
@@ -1302,46 +1283,18 @@ function getLLMRequestDetails(key: string, requestedModel: string) {
       },
       model: mappedModel
     }
-  }
-
-  if (k.length > 5) {
+  } else {
     return {
       url: 'https://openrouter.ai/api/v1/chat/completions',
       headers: {
-        'Authorization': `Bearer ${k}`,
+        'Authorization': 'Bearer ' + k,
         'Content-Type': 'application/json',
         'HTTP-Referer': 'https://metaagent.ai',
         'X-Title': 'MetaAgent AI'
       },
-      model: requestedModel || 'anthropic/claude-3.5-sonnet'
+      model: requestedModel
     }
   }
-
-  if (geminiEnv) {
-    return {
-      url: `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`,
-      headers: {
-        'Authorization': `Bearer ${geminiEnv}`,
-        'Content-Type': 'application/json'
-      },
-      model: 'gemini-2.5-flash'
-    }
-  }
-
-  if (openRouterEnv) {
-    return {
-      url: 'https://openrouter.ai/api/v1/chat/completions',
-      headers: {
-        'Authorization': `Bearer ${openRouterEnv}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://metaagent.ai',
-        'X-Title': 'MetaAgent AI'
-      },
-      model: requestedModel || 'anthropic/claude-3.5-sonnet'
-    }
-  }
-
-  throw new Error("Missing API Key. Please enter your OpenRouter API Key or Gemini API Key in Settings.");
 }
 
 // ============================================================
