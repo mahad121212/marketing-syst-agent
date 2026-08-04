@@ -804,7 +804,8 @@ async function executeTool(
 
       try {
         const formattedAccountId = metaAdAccountId.startsWith('act_') ? metaAdAccountId : `act_${metaAdAccountId}`;
-        const url = `https://graph.facebook.com/v19.0/${formattedAccountId}/campaigns?fields=id,name,status,daily_budget,lifetime_budget,objective,adsets{id,name,status,daily_budget,targeting,insights{spend,impressions,clicks,cpc,cpm,ctr}},insights{spend,impressions,clicks,cpc,cpm,ctr}&access_token=${metaToken}`;
+        const filteringParam = encodeURIComponent(JSON.stringify([{ field: 'effective_status', operator: 'IN', value: ['ACTIVE', 'PAUSED'] }]));
+        const url = `https://graph.facebook.com/v19.0/${formattedAccountId}/campaigns?fields=id,name,status,effective_status,daily_budget,lifetime_budget,objective,adsets{id,name,status,effective_status,daily_budget,targeting,insights{spend,impressions,clicks,cpc,cpm,ctr}},insights{spend,impressions,clicks,cpc,cpm,ctr}&filtering=${filteringParam}&access_token=${metaToken}`;
         
         const metaRes = await fetch(url);
         if (!metaRes.ok) {
@@ -822,42 +823,46 @@ async function executeTool(
           return JSON.stringify({ data_source: 'LIVE_META_GRAPH_API', hierarchy: [] });
         }
 
-        const liveHierarchy = metaJson.data.map((c: any) => {
-          const cInsights = c.insights?.data?.[0] || {};
-          return {
-            id: c.id,
-            name: c.name,
-            status: c.status,
-            daily_budget: c.daily_budget ? Number(c.daily_budget) / 100 : undefined,
-            objective: c.objective,
-            performance_metrics: {
-              spend: Number(cInsights.spend || 0),
-              impressions: Number(cInsights.impressions || 0),
-              clicks: Number(cInsights.clicks || 0),
-              cpc: Number(cInsights.cpc || 0),
-              cpm: Number(cInsights.cpm || 0),
-              ctr: Number(cInsights.ctr || 0)
-            },
-            ad_sets: c.adsets?.data?.map((s: any) => {
-              const sInsights = s.insights?.data?.[0] || {};
-              return {
-                id: s.id,
-                name: s.name,
-                status: s.status,
-                daily_budget: s.daily_budget ? Number(s.daily_budget) / 100 : undefined,
-                targeting: s.targeting,
-                performance_metrics: {
-                  spend: Number(sInsights.spend || 0),
-                  impressions: Number(sInsights.impressions || 0),
-                  clicks: Number(sInsights.clicks || 0),
-                  cpc: Number(sInsights.cpc || 0),
-                  cpm: Number(sInsights.cpm || 0),
-                  ctr: Number(sInsights.ctr || 0)
-                }
-              };
-            }) || []
-          };
-        });
+        const liveHierarchy = metaJson.data
+          .filter((c: any) => c.effective_status !== 'DELETED' && c.effective_status !== 'ARCHIVED')
+          .map((c: any) => {
+            const cInsights = c.insights?.data?.[0] || {};
+            return {
+              id: c.id,
+              name: c.name,
+              status: c.status || c.effective_status,
+              daily_budget: c.daily_budget ? Number(c.daily_budget) / 100 : undefined,
+              objective: c.objective,
+              performance_metrics: {
+                spend: Number(cInsights.spend || 0),
+                impressions: Number(cInsights.impressions || 0),
+                clicks: Number(cInsights.clicks || 0),
+                cpc: Number(cInsights.cpc || 0),
+                cpm: Number(cInsights.cpm || 0),
+                ctr: Number(cInsights.ctr || 0)
+              },
+              ad_sets: c.adsets?.data
+                ?.filter((s: any) => s.effective_status !== 'DELETED' && s.effective_status !== 'ARCHIVED')
+                ?.map((s: any) => {
+                  const sInsights = s.insights?.data?.[0] || {};
+                  return {
+                    id: s.id,
+                    name: s.name,
+                    status: s.status || s.effective_status,
+                    daily_budget: s.daily_budget ? Number(s.daily_budget) / 100 : undefined,
+                    targeting: s.targeting,
+                    performance_metrics: {
+                      spend: Number(sInsights.spend || 0),
+                      impressions: Number(sInsights.impressions || 0),
+                      clicks: Number(sInsights.clicks || 0),
+                      cpc: Number(sInsights.cpc || 0),
+                      cpm: Number(sInsights.cpm || 0),
+                      ctr: Number(sInsights.ctr || 0)
+                    }
+                  };
+                }) || []
+            };
+          });
 
         return JSON.stringify({ data_source: 'LIVE_META_GRAPH_API', hierarchy: liveHierarchy });
       } catch (e: any) {
