@@ -425,32 +425,40 @@ The following tools exist in the system. You do not call these tools — this li
 Note: This tool list is for your thinking context only. Other stages will independently decide which tools to use based on your plan.
 `;
 
-  return `You are the Strategic Planner, and I am a planner — my job is to think deeply, reason from first principles, and form a comprehensive strategic direction.
+  return `You are the internal Strategic Planner engine (Phase 1). Your job is to think deeply, reason from first principles, and establish an internal strategic roadmap for the downstream specialist agents in this pipeline (Phase 2 Research Agent, Phase 3 Master Strategy, Phase 10 Execution Worker, Phase 11 Formatter).
 
 ${profileContext}
 
 ${toolContext}
 
+## CRITICAL VOICE & ROLE DIRECTIVES (INTERNAL SUBSYSTEM ROLE):
+1. INTERNAL ROLE ONLY: You are an internal thinking engine. You are NOT talking to the human user. 
+2. NO USER-FACING QUESTIONS: DO NOT address the human user directly. DO NOT ask the user questions (e.g. "Would you like me to draft ad copy?"). DO NOT offer next steps to the user.
+3. SELF-AWARE PIPELINE REASONING: Frame your thought process internally:
+   - "Strategic Direction:"
+   - "Target Architecture:"
+   - "Downstream Research Directives for Phase 2:"
+   - "Internal Validation Criteria for Phase 3:"
+   - Evaluate your own internal readiness: "Have I provided enough clarity and strategic rigor for Phase 2 (Research Agent) and Phase 3 (Master Strategy) to proceed?"
+
 ## Holistic First-Principles Reasoning Rules:
 1. HOLISTIC EVALUATION: Do NOT rely on rigid formulas or hardcoded rules. Synthesize target country CPM economics, margin/AOV, business model, and user resources.
-2. CURRENCY INTEGRITY: Preserve the user's native currency (${businessProfile?.currency || 'PKR'}) at often times. If the currency is not mentioned in the user's request, look for clear clues in the prompt or business profile. If you still cannot determine it, note that clarification from the user would be helpful.
+2. CURRENCY INTEGRITY: Preserve the user's native currency (${businessProfile?.currency || 'PKR'}) at all times.
 3. TIMELINE & PACING GUARDRAILS:
-   - **Direct User Constraint**: If the user explicitly asks to run a campaign for a specific duration (e.g. "run for 2 days"), you MUST respect and match your strategy to this timeline.
-   - **Open-Ended Strategy**: If the timeline is open-ended, reason from first principles. Propose a robust budget test pacing plan (recommend 4+ days to capture daily fluctuations and allow Meta's machine learning/CPA optimization to gather adequate conversion data).
+   - **Direct User Constraint**: If the user explicitly asks to run a campaign for a specific duration (e.g. "run for 2 days"), match your internal strategy to this timeline.
+   - **Open-Ended Strategy**: Reason from first principles. Propose a robust budget test pacing plan (recommend 4+ days for Meta's machine learning).
 4. UNIFIED THINKING:
-   - Think through a detailed strategic direction covering budget pacing logic, creative hook themes, average order value leverage, and post-launch decision trees.
-   - Your thinking will be used by a plan generator to form an actionable blueprint, then a research agent will gather live account data, and finally a strategy reasoner will refine everything into the final response. Think broadly and deeply — your reasoning sets the foundation for the entire pipeline.
+   - Think through detailed strategic direction covering budget pacing logic, creative hook themes, average order value leverage, and post-launch decision trees.
+   - Your internal blueprint will be consumed by downstream agents. Provide clear, objective strategic direction.
 
 ## Intent Awareness (USE YOUR NATURAL INTELLIGENCE — NO WORDLISTS)
 At the very beginning of your response, you MUST state one of these three prefixes:
 
-- "CONVERSATIONAL: " — For greetings, thanks, acknowledgments, compliments, or any message where the user is NOT asking you to do, analyze, or create anything. Provide a warm, direct 1-2 sentence reply and stop. Do NOT output any strategic thinking. EVEN IF there is extensive campaign history in the chat, a simple acknowledgment MUST be classified as CONVERSATIONAL.
+- "CONVERSATIONAL: " — For greetings, thanks, acknowledgments, compliments, or messages where the user is NOT asking to analyze or create anything. Provide a concise reply and stop. EVEN IF there is campaign history, a simple acknowledgment MUST be classified as CONVERSATIONAL.
 
-- "ANALYTICAL: " — For observation/data questions where the user wants to SEE what exists in their account or understand current performance (e.g. "analyse my campaigns", "what ads do I have?", "show me my performance", "how are things going?", "what's running right now?"). Provide a brief analysis plan focused on PRESENTING DATA FIRST, then advising. Keep it concise — the user wants to see their data, not a strategy blueprint.
+- "ANALYTICAL: " — For observation/data questions where the user wants to SEE what exists in their account or understand performance (e.g. "analyse my campaigns", "what ads do I have?"). Outline an internal data gathering plan focused on PRESENTING DATA FIRST.
 
-- "STRATEGIC: " — For requests that need full strategic deep thinking (e.g. "how should I spend 6500 PKR?", "create a campaign for my sneakers", "what's the best approach to scale?", "launch something new"). Provide your full first-principles thinking narrative.
-
-Use your natural intelligence to classify. Read the full message, understand the user's actual intent, and classify accordingly. A billion-parameter model does not need a wordlist.`;
+- "STRATEGIC: " — For requests requiring full strategic deep thinking (e.g. "how should I spend 6500 PKR?", "create a campaign for my sneakers"). Provide your full internal first-principles blueprint narrative.`;
 }
 
 function generatePreExecutionPlanGeneratorPrompt(businessProfile: any) {
@@ -787,14 +795,69 @@ async function executeTool(
 ): Promise<string> {
   switch (toolName) {
     case 'get_campaign_hierarchy': {
-      const { data: campaigns } = await supabaseClient.from('campaigns').select('*').eq('user_id', userId)
-      const { data: adSets } = await supabaseClient.from('ad_sets').select('*').eq('user_id', userId)
-      const { data: ads } = await supabaseClient.from('ads').select('*').eq('user_id', userId)
-      
-      const now = new Date().getTime()
-      const calcAge = (createdAt: string) => Math.max(0, Math.floor((now - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24)))
+      // 1. Primary Source: Fetch live from Meta Graph API if credentials are provided
+      if (metaToken && metaAdAccountId) {
+        try {
+          const formattedAccountId = metaAdAccountId.startsWith('act_') ? metaAdAccountId : `act_${metaAdAccountId}`;
+          const url = `https://graph.facebook.com/v19.0/${formattedAccountId}/campaigns?fields=id,name,status,daily_budget,lifetime_budget,objective,adsets{id,name,status,daily_budget,targeting,insights{spend,impressions,clicks,cpc,cpm,ctr}},insights{spend,impressions,clicks,cpc,cpm,ctr}&access_token=${metaToken}`;
+          
+          const metaRes = await fetch(url);
+          if (metaRes.ok) {
+            const metaJson = await metaRes.json();
+            if (metaJson.data) {
+              const liveHierarchy = metaJson.data.map((c: any) => {
+                const cInsights = c.insights?.data?.[0] || {};
+                return {
+                  id: c.id,
+                  name: c.name,
+                  status: c.status,
+                  daily_budget: c.daily_budget ? Number(c.daily_budget) / 100 : undefined,
+                  objective: c.objective,
+                  performance_metrics: {
+                    spend: Number(cInsights.spend || 0),
+                    impressions: Number(cInsights.impressions || 0),
+                    clicks: Number(cInsights.clicks || 0),
+                    cpc: Number(cInsights.cpc || 0),
+                    cpm: Number(cInsights.cpm || 0),
+                    ctr: Number(cInsights.ctr || 0)
+                  },
+                  ad_sets: c.adsets?.data?.map((s: any) => {
+                    const sInsights = s.insights?.data?.[0] || {};
+                    return {
+                      id: s.id,
+                      name: s.name,
+                      status: s.status,
+                      daily_budget: s.daily_budget ? Number(s.daily_budget) / 100 : undefined,
+                      targeting: s.targeting,
+                      performance_metrics: {
+                        spend: Number(sInsights.spend || 0),
+                        impressions: Number(sInsights.impressions || 0),
+                        clicks: Number(sInsights.clicks || 0),
+                        cpc: Number(sInsights.cpc || 0),
+                        cpm: Number(sInsights.cpm || 0),
+                        ctr: Number(sInsights.ctr || 0)
+                      }
+                    };
+                  }) || []
+                };
+              });
 
-      // Build nested hierarchy
+              return JSON.stringify({ data_source: 'LIVE_META_GRAPH_API', hierarchy: liveHierarchy });
+            }
+          }
+        } catch (e: any) {
+          console.error("Live Meta Graph API query failed, using Supabase fallback:", e.message);
+        }
+      }
+
+      // 2. Fallback Source: Fetch from Supabase Database if Meta token is unconfigured or call fails
+      const { data: campaigns } = await supabaseClient.from('campaigns').select('*').eq('user_id', userId);
+      const { data: adSets } = await supabaseClient.from('ad_sets').select('*').eq('user_id', userId);
+      const { data: ads } = await supabaseClient.from('ads').select('*').eq('user_id', userId);
+      
+      const now = new Date().getTime();
+      const calcAge = (createdAt: string) => Math.max(0, Math.floor((now - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24)));
+
       const hierarchy = campaigns?.map((c: any) => ({
         id: c.id,
         name: c.name,
@@ -811,9 +874,9 @@ async function executeTool(
           age_days: calcAge(s.created_at),
           ads_count: ads?.filter((a: any) => a.ad_set_id === s.id).length
         }))
-      }))
+      }));
 
-      return JSON.stringify({ hierarchy })
+      return JSON.stringify({ data_source: 'SUPABASE_DATABASE_FALLBACK', hierarchy });
     }
 
     case 'get_state_snapshots': {
