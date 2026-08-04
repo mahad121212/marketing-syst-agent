@@ -296,28 +296,10 @@ function classifyUserIntent(prompt: string, businessProfile: any, campaignCount:
   }
 }
 
-function isPurelyConversationalPrompt(prompt: string): boolean {
-  const p = prompt.trim().toLowerCase().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, '')
-  
-  // Exact or pattern matches for pure acknowledgments, compliments, thanks, greetings
-  const conversationalRegex = /^(ok|okay|got it|cool|great|awesome|nice|perfect|sure|understood|alright|thank you|thanks|thx|tysm|hi|hello|hey|good morning|good afternoon|good evening|sounds good|looks good|thats amazing|that is amazing|thats great|that is great|thats awesome|that is awesome|love it|wonderful|brilliant|fantastic|nice work|good job)( (thanks|thank you|for (telling me|the info|the help|sharing|explaining|the detailed plan|the advice)))?$/i
-
-  if (conversationalRegex.test(p)) return true
-
-  // If prompt is very short (<= 6 words) AND contains zero marketing/campaign directives
-  const words = p.split(/\s+/)
-  if (words.length <= 6) {
-    const strategicKeywords = ['campaign', 'ad', 'set', 'budget', 'scale', 'pause', 'create', 'launch', 'roas', 'cpa', 'target', 'pkr', 'usd', 'rs', 'rupees', 'dollar', 'option', 'strategy', 'plan', 'audience', 'convert', 'sales', 'how', 'what', 'when', 'where', 'why', 'who', 'run']
-    const hasDirective = strategicKeywords.some(kw => p.includes(kw))
-    if (!hasDirective) {
-      const pleasantryKeywords = ['thanks', 'thank', 'ok', 'okay', 'got', 'cool', 'great', 'awesome', 'nice', 'perfect', 'sure', 'understood', 'alright', 'hi', 'hello', 'hey', 'good', 'amazing', 'love', 'wonderful', 'brilliant']
-      if (pleasantryKeywords.some(kw => p.includes(kw))) {
-        return true
-      }
-    }
-  }
-
-  return false
+function isPurelyConversationalPrompt(_prompt: string): boolean {
+  // Intent classification is now handled entirely by the LLM Planner (Stage 1).
+  // No hardcoded wordlists. The billion-parameter model decides naturally.
+  return false;
 }
 
 async function retrieveKnowledge(supabaseClient: any, dimensions: any): Promise<string> {
@@ -430,18 +412,16 @@ ${toolContext}
    - Think through a detailed strategic direction covering budget pacing logic, creative hook themes, average order value leverage, and post-launch decision trees.
    - Your thinking will be used by a plan generator to form an actionable blueprint, then a research agent will gather live account data, and finally a strategy reasoner will refine everything into the final response. Think broadly and deeply — your reasoning sets the foundation for the entire pipeline.
 
-## Intent Awareness (CRITICAL CLASSIFICATION RULE)
-At the very beginning of your response, you MUST state one of these two lines:
-- "CONVERSATIONAL: " followed by a brief, warm 1-2 sentence response.
-- "STRATEGIC: " followed by your full first-principles thinking narrative.
+## Intent Awareness (USE YOUR NATURAL INTELLIGENCE — NO WORDLISTS)
+At the very beginning of your response, you MUST state one of these three prefixes:
 
-You MUST choose "CONVERSATIONAL: " if:
-1. The user's message is a thank-you, acknowledgment, greeting, or simple pleasantry (e.g. "ok thanks for telling me", "got it", "sounds good", "cool", "thank you", "hello").
-2. The user is NOT asking you to plan, create, analyze, optimize, scale, pause, or change anything.
-3. EVEN IF THERE IS EXTENSIVE CAMPAIGN HISTORY IN THE CHAT, a simple acknowledgment or non-directive message MUST be classified as CONVERSATIONAL. Do NOT over-interpret simple acknowledgments as a request to continue campaign strategy or schedule goals.
+- "CONVERSATIONAL: " — For greetings, thanks, acknowledgments, compliments, or any message where the user is NOT asking you to do, analyze, or create anything. Provide a warm, direct 1-2 sentence reply and stop. Do NOT output any strategic thinking. EVEN IF there is extensive campaign history in the chat, a simple acknowledgment MUST be classified as CONVERSATIONAL.
 
-If conversational, provide a warm, direct 1-2 sentence answer (e.g. "CONVERSATIONAL: You're very welcome! I'm here whenever you're ready to review options or launch the campaign.") and stop there. Do NOT output any strategic thinking.
-If strategic, write your full first-person thinking narrative — reason about the budget, the market, the audience, creative direction, campaign structure, what tools and data would be needed, and what the optimal approach looks like. Think freely and deeply. Do not constrain your output to any structured format.`;
+- "ANALYTICAL: " — For observation/data questions where the user wants to SEE what exists in their account or understand current performance (e.g. "analyse my campaigns", "what ads do I have?", "show me my performance", "how are things going?", "what's running right now?"). Provide a brief analysis plan focused on PRESENTING DATA FIRST, then advising. Keep it concise — the user wants to see their data, not a strategy blueprint.
+
+- "STRATEGIC: " — For requests that need full strategic deep thinking (e.g. "how should I spend 6500 PKR?", "create a campaign for my sneakers", "what's the best approach to scale?", "launch something new"). Provide your full first-principles thinking narrative.
+
+Use your natural intelligence to classify. Read the full message, understand the user's actual intent, and classify accordingly. A billion-parameter model does not need a wordlist.`;
 }
 
 function generatePreExecutionPlanGeneratorPrompt(businessProfile: any) {
@@ -491,6 +471,7 @@ The Pre-Execution Plan Generator proposed the complete strategy and blueprint, b
 - ADAPTIVE ACCOUNT INTELLIGENCE (SMART & FLUID): If the live research shows successful active campaigns in the user's account, intelligently reference their winning elements (e.g. high ROAS, winning creative formats, top CPA angles) as empirical proof points in your strategy.
 - VAGUE / OPEN-ENDED PROMPTS: If the user prompt is open-ended ("what next?", "how do I scale?"), analyze active account winners and formulate a proactive scaling or optimization roadmap grounded in their actual data.
 - TOPIC INTEGRITY: Maintain strict topic continuity for the active product/brand discussed in the conversation. Weave winning account learnings naturally into your narrative prose — never attach dry, raw database dumps.
+- PROPORTIONAL RESPONSE: Match the depth and complexity of your output to the user's question. Simple observation requests ("what campaigns exist?", "analyse my account") get concise, data-first summaries. Complex strategy requests ("how do I scale with 50k PKR?") get comprehensive treatment. Never produce a 500-word strategic blueprint for a question that needs a 3-line data summary.
 
 Write your reasoning and refined strategy as natural, free-form text. Do NOT call tools or format output into JSON.`;
 }
@@ -1372,14 +1353,21 @@ serve(async (req) => {
           // Raw text intent detection (no JSON parsing)
           const plannerThinking = rawContent.trim()
           const isConversational = plannerThinking.toUpperCase().startsWith('CONVERSATIONAL:')
+          const isAnalytical = plannerThinking.toUpperCase().startsWith('ANALYTICAL:')
+          
+          let detectedIntent = 'CAMPAIGN_STRATEGY'
+          if (isConversational) detectedIntent = 'CONVERSATION'
+          else if (isAnalytical) detectedIntent = 'ANALYTICAL'
+
           planJson = {
-            intent: isConversational ? 'CONVERSATION' : 'CAMPAIGN_STRATEGY',
+            intent: detectedIntent,
             raw_thinking: plannerThinking,
             conversational_response: isConversational ? plannerThinking.replace(/^CONVERSATIONAL:\s*/i, '') : '',
             currency: businessProfile?.currency || 'PKR'
           }
           
-          thinkingSteps.push(`💭 Strategic Planner Thinking (${isConversational ? 'Conversational' : 'Strategic'}):\n"${plannerThinking.substring(0, 300)}..."`)
+          const intentLabel = isConversational ? 'Conversational' : (isAnalytical ? 'Analytical' : 'Strategic')
+          thinkingSteps.push(`💭 Strategic Planner Thinking (${intentLabel}):\n"${plannerThinking.substring(0, 300)}..."`)
         } catch (err: any) {
           console.error('Planner phase failed, using fallback:', err.message)
           thinkingSteps.push('[Planning] Strategic planner phase encountered an error. Proceeding with fallback plan.')
@@ -1409,31 +1397,38 @@ serve(async (req) => {
           expert_contributions: []
         }
 
-        // ===== PHASE 1.5: Pre-Execution Plan Generator =====
-        thinkingSteps.push('🛡️ Pre-Execution: Plan Generator forming strategic blueprint from Planner thinking...')
-        try {
-          const reqDetails = getLLMRequestDetails(openRouterKey, model)
-          const planGenRes = await fetch(reqDetails.url, {
-            method: 'POST',
-            headers: reqDetails.headers,
-            body: JSON.stringify({
-              model: reqDetails.model,
-              max_tokens: maxTokens,
-              messages: [
-                { role: 'system', content: generatePreExecutionPlanGeneratorPrompt(businessProfile) },
-                { role: 'user', content: `## Planner's Deep Thinking\nThe Strategic Planner analyzed the user's request and produced the following first-principles thinking:\n\n${conversationBrain.planner_thinking}\n\n## User's Original Prompt\nThis was the user's original request on which the Planner generated the above thinking:\n\n${prompt}` }
-              ]
+        const isAnalyticalIntent = planJson.intent === 'ANALYTICAL'
+
+        // ===== PHASE 1.5: Pre-Execution Plan Generator (SKIP for ANALYTICAL intent) =====
+        if (!isAnalyticalIntent) {
+          thinkingSteps.push('🛡️ Pre-Execution: Plan Generator forming strategic blueprint from Planner thinking...')
+          try {
+            const reqDetails = getLLMRequestDetails(openRouterKey, model)
+            const planGenRes = await fetch(reqDetails.url, {
+              method: 'POST',
+              headers: reqDetails.headers,
+              body: JSON.stringify({
+                model: reqDetails.model,
+                max_tokens: maxTokens,
+                messages: [
+                  { role: 'system', content: generatePreExecutionPlanGeneratorPrompt(businessProfile) },
+                  { role: 'user', content: `## Planner's Deep Thinking\nThe Strategic Planner analyzed the user's request and produced the following first-principles thinking:\n\n${conversationBrain.planner_thinking}\n\n## User's Original Prompt\nThis was the user's original request on which the Planner generated the above thinking:\n\n${prompt}` }
+                ]
+              })
             })
-          })
-          if (planGenRes.ok) {
-            const data = await planGenRes.json()
-            conversationBrain.pre_execution_plan = data.choices[0].message.content || conversationBrain.planner_thinking
-            thinkingSteps.push('🛡️ Pre-Execution Plan Generator: Strategic blueprint formed successfully.')
-          } else {
+            if (planGenRes.ok) {
+              const data = await planGenRes.json()
+              conversationBrain.pre_execution_plan = data.choices[0].message.content || conversationBrain.planner_thinking
+              thinkingSteps.push('🛡️ Pre-Execution Plan Generator: Strategic blueprint formed successfully.')
+            } else {
+              conversationBrain.pre_execution_plan = conversationBrain.planner_thinking
+            }
+          } catch (err: any) {
+            console.error('Pre-execution plan generator error:', err.message)
             conversationBrain.pre_execution_plan = conversationBrain.planner_thinking
           }
-        } catch (err: any) {
-          console.error('Pre-execution plan generator error:', err.message)
+        } else {
+          thinkingSteps.push('📊 Analytical intent detected. Skipping Pre-Execution Plan — going straight to data gathering.')
           conversationBrain.pre_execution_plan = conversationBrain.planner_thinking
         }
 
@@ -1522,45 +1517,49 @@ serve(async (req) => {
           conversationBrain.strategy_proposal = conversationBrain.pre_execution_plan
         }
 
-        // ===== PHASE 4: Board of Constructive Expert Debaters =====
-        thinkingSteps.push('📋 Phase 4: Board of Constructive Expert Debaters evaluating strategy...')
-        const reviewerConfigs = [
-          { id: 'strategy', label: '🎯 CSO Strategy Expert', promptFn: generateStrategyReviewerPrompt },
-          { id: 'copy', label: '✍️ Lead Copywriting Expert', promptFn: generateCopyReviewerPrompt },
-          { id: 'creative', label: '🎨 Creative Director Expert', promptFn: generateCreativeReviewerPrompt },
-          { id: 'diversity', label: '🎭 Creative Diversity Auditor', promptFn: generateDiversityReviewerPrompt },
-          { id: 'compliance', label: '🛡️ Operations & Policy Auditor', promptFn: generateComplianceReviewerPrompt },
-          { id: 'performance', label: '📊 Finance & Performance Expert', promptFn: generatePerformanceReviewerPrompt }
-        ]
+        // ===== PHASE 4: Board of Constructive Expert Debaters (SKIP for ANALYTICAL intent) =====
+        if (!isAnalyticalIntent) {
+          thinkingSteps.push('📋 Phase 4: Board of Constructive Expert Debaters evaluating strategy...')
+          const reviewerConfigs = [
+            { id: 'strategy', label: '🎯 CSO Strategy Expert', promptFn: generateStrategyReviewerPrompt },
+            { id: 'copy', label: '✍️ Lead Copywriting Expert', promptFn: generateCopyReviewerPrompt },
+            { id: 'creative', label: '🎨 Creative Director Expert', promptFn: generateCreativeReviewerPrompt },
+            { id: 'diversity', label: '🎭 Creative Diversity Auditor', promptFn: generateDiversityReviewerPrompt },
+            { id: 'compliance', label: '🛡️ Operations & Policy Auditor', promptFn: generateComplianceReviewerPrompt },
+            { id: 'performance', label: '📊 Finance & Performance Expert', promptFn: generatePerformanceReviewerPrompt }
+          ]
 
-        const reviewerPromises = reviewerConfigs.map(async (config) => {
-          try {
-            const reqDetails = getLLMRequestDetails(openRouterKey, model)
-            const reviewerRes = await fetch(reqDetails.url, {
-              method: 'POST',
-              headers: reqDetails.headers,
-              body: JSON.stringify({
-                model: reqDetails.model,
-                max_tokens: reviewerMaxTokens,
-                messages: [
-                  { role: 'system', content: config.promptFn(businessProfile) },
-                  { role: 'user', content: `User's Original Request: ${prompt}\n\nStrategy Proposal to Review:\n${conversationBrain.strategy_proposal}\n\nResearch Evidence:\n${JSON.stringify(conversationBrain.evidence)}` }
-                ]
+          const reviewerPromises = reviewerConfigs.map(async (config) => {
+            try {
+              const reqDetails = getLLMRequestDetails(openRouterKey, model)
+              const reviewerRes = await fetch(reqDetails.url, {
+                method: 'POST',
+                headers: reqDetails.headers,
+                body: JSON.stringify({
+                  model: reqDetails.model,
+                  max_tokens: reviewerMaxTokens,
+                  messages: [
+                    { role: 'system', content: config.promptFn(businessProfile) },
+                    { role: 'user', content: `User's Original Request: ${prompt}\n\nStrategy Proposal to Review:\n${conversationBrain.strategy_proposal}\n\nResearch Evidence:\n${JSON.stringify(conversationBrain.evidence)}` }
+                  ]
+                })
               })
-            })
-            if (!reviewerRes.ok) throw new Error(await reviewerRes.text())
-            const data = await reviewerRes.json()
-            const rawReview = data.choices[0].message.content || 'Validated. No concerns.'
-            return { role: config.id, label: config.label, raw_review: rawReview }
-          } catch (err: any) {
-            return { role: config.id, label: config.label, raw_review: 'Validated. No concerns.' }
-          }
-        })
+              if (!reviewerRes.ok) throw new Error(await reviewerRes.text())
+              const data = await reviewerRes.json()
+              const rawReview = data.choices[0].message.content || 'Validated. No concerns.'
+              return { role: config.id, label: config.label, raw_review: rawReview }
+            } catch (err: any) {
+              return { role: config.id, label: config.label, raw_review: 'Validated. No concerns.' }
+            }
+          })
 
-        const reviews = await Promise.all(reviewerPromises)
-        for (const r of reviews) {
-          conversationBrain.expert_contributions.push({ expert: r.label, review: r.raw_review })
-          thinkingSteps.push(`${r.label}: "${(r.raw_review || 'Validated.').substring(0, 200)}"`)  
+          const reviews = await Promise.all(reviewerPromises)
+          for (const r of reviews) {
+            conversationBrain.expert_contributions.push({ expert: r.label, review: r.raw_review })
+            thinkingSteps.push(`${r.label}: "${(r.raw_review || 'Validated.').substring(0, 200)}"`)  
+          }
+        } else {
+          thinkingSteps.push('📊 Analytical intent — skipping Expert Reviewers. Proceeding directly to Response Agent.')
         }
 
         // ===== PHASE 5: Execution Worker & Response Agent =====
@@ -1570,7 +1569,10 @@ serve(async (req) => {
           `- User's Original Request: ${prompt}\n(This was the user's original request. Everything up to this point has been processed according to this. The user prompt is provided as context only \u2014 do not re-analyze it for new decisions.)\n\n` +
           `- Core Strategy Proposal:\n${conversationBrain.strategy_proposal}\n\n` +
           `- Expert Contributions & Reviews:\n${conversationBrain.expert_contributions.map((e: any) => `**${e.expert}:** ${e.review}`).join('\n\n')}\n\n` +
-          `INSTRUCTIONS: Synthesize all research evidence, core strategy, and expert contributions into a single, masterclass Growth Response. If creation tools (create_campaign, etc.) are needed, execute them now.`;
+          `## CRITICAL EXECUTION RULES:\n` +
+          `1. PROPORTIONAL RESPONSE: If the user's original request is a data/observation question (e.g. "analyse my campaigns", "what ads exist?", "show me performance"), LEAD with a clean, plain data presentation of what exists in the account. Then provide brief, focused observations. Do NOT produce a full strategy blueprint for a simple data question.\n` +
+          `2. NO REDUNDANT TOOL CALLS: The Research Agent has already gathered all live account data. It is in the Shared Working Memory above. Do NOT re-call get_campaign_hierarchy or get_account_summary_snapshots. Only use creation/action tools (create_campaign, propose_action_card, set_goal_schedule, etc.) if the strategy requires creating or modifying entities.\n` +
+          `3. SYNTHESIZE: Combine research evidence, core strategy, and expert contributions into your final response. If creation tools are needed, execute them now.`;
 
         const responseMessages: any[] = [
           { role: 'system', content: responseWorkerPrompt },
