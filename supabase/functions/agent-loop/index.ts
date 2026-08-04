@@ -159,6 +159,13 @@ const AGENT_TOOLS = [
 ]
 
 // ============================================================
+// ACTION TOOLS FOR STAGE 10 WORKER (Excludes Read-Only Tools)
+// ============================================================
+const ACTION_TOOLS = AGENT_TOOLS.filter(t => 
+  ['create_campaign', 'create_ad_set', 'create_ad', 'propose_action_card', 'set_goal_schedule', 'report_no_action'].includes(t.function.name)
+)
+
+// ============================================================
 // MARKETING KNOWLEDGE ENGINE (Phase 0)
 // ============================================================
 
@@ -470,7 +477,7 @@ The Pre-Execution Plan Generator proposed the complete strategy and blueprint, b
 - Make small to major changes as needed based on the research evidence.
 - ADAPTIVE ACCOUNT INTELLIGENCE (SMART & FLUID): If the live research shows successful active campaigns in the user's account, intelligently reference their winning elements (e.g. high ROAS, winning creative formats, top CPA angles) as empirical proof points in your strategy.
 - VAGUE / OPEN-ENDED PROMPTS: If the user prompt is open-ended ("what next?", "how do I scale?"), analyze active account winners and formulate a proactive scaling or optimization roadmap grounded in their actual data.
-- TOPIC INTEGRITY: Maintain strict topic continuity for the active product/brand discussed in the conversation. Weave winning account learnings naturally into your narrative prose — never attach dry, raw database dumps.
+- TOPIC INTEGRITY & BUSINESS IDENTITY ALIGNMENT: Always cross-reference retrieved account campaigns against the user's active Business Profile (name, industry, business description). If an existing campaign in the account fundamentally conflicts with the user's business identity (e.g. campaign says "Skincare" but business is "Urban Kicks Footwear"), DO NOT adopt or generate strategy for the conflicting product identity. Highlight the mismatch clearly to the user and offer to archive or replace the campaign.
 - PROPORTIONAL RESPONSE: Match the depth and complexity of your output to the user's question. Simple observation requests ("what campaigns exist?", "analyse my account") get concise, data-first summaries. Complex strategy requests ("how do I scale with 50k PKR?") get comprehensive treatment. Never produce a 500-word strategic blueprint for a question that needs a 3-line data summary.
 
 Write your reasoning and refined strategy as natural, free-form text. Do NOT call tools or format output into JSON.`;
@@ -663,9 +670,10 @@ If the user asks a strategic question ("what should I do?", "how should I spend?
 If the user gives you a SPECIFIC directive ("create a campaign named X with budget Y"), then act directly using tools. Or if the user is leaning towards a specific action or plan and is not able to move on, nudge them forward. Even when doing things immediately, you should provide a very short, clear direction of results this action can generate honestly — whether good or bad.
 
 ## Adaptive Account Intelligence & Natural Proof-Points (SMART & FLUID)
-1. DYNAMIC ACCOUNT BENCHMARKING: Be smart and adaptive, not rigid. If the user's account contains active, high-performing campaigns for their business (e.g. strong ROAS or beating target CPA), fluidly reference them as empirical proof points in your recommendations (e.g. "Building on the strong 4.2 ROAS of your active [Campaign Name]...").
-2. VAGUE OR OPEN-ENDED PROMPTS: When the user asks directionless or open-ended questions ("what next?", "how do I grow?", "how can I optimize?"), inspect the active campaign hierarchy and provide an actionable scaling/optimization roadmap tied directly to their winning account assets.
-3. NATURAL STORYTELLING: Weave active campaign benchmarks naturally into your narrative prose like an expert Senior Media Buyer advising a client. Never attach dry, raw database dumps or unrelated campaign tables at the end of the text.
+1. BUSINESS IDENTITY CROSS-CHECK (CRITICAL): Always verify that retrieved campaigns match the active Business Profile (name, industry, product description). If an account campaign name or objective conflicts with the business identity (e.g., campaign says "Skincare" but business is "Urban Kicks Footwear"), DO NOT build copy, creative hooks, or roadmaps for the conflicting category. Inform the user of the disconnect cleanly.
+2. DYNAMIC ACCOUNT BENCHMARKING: Be smart and adaptive, not rigid. If the user's account contains active, high-performing campaigns for their business (e.g. strong ROAS or beating target CPA), fluidly reference them as empirical proof points in your recommendations (e.g. "Building on the strong 4.2 ROAS of your active [Campaign Name]...").
+3. VAGUE OR OPEN-ENDED PROMPTS: When the user asks directionless or open-ended questions ("what next?", "how do I grow?", "how can I optimize?"), inspect the active campaign hierarchy and provide an actionable scaling/optimization roadmap tied directly to their winning account assets.
+4. NATURAL STORYTELLING: Weave active campaign benchmarks naturally into your narrative prose like an expert Senior Media Buyer advising a client. Never attach dry, raw database dumps or unrelated campaign tables at the end of the text.
 
 ## Temporal Discipline (CRITICAL)
 You MUST check the \`age_days\` of every item before reasoning about it.
@@ -1586,7 +1594,7 @@ serve(async (req) => {
             model: getLLMRequestDetails(openRouterKey, model).model,
             max_tokens: maxTokens,
             messages: responseMessages,
-            tools: AGENT_TOOLS,
+            tools: ACTION_TOOLS,
             tool_choice: 'auto'
           })
         })
