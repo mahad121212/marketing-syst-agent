@@ -645,15 +645,15 @@ Respond ONLY with a JSON object:
 
 function generateFormatterPrompt() {
   return `You are NOT the conversational assistant. You are an INTERNAL formatting service.
-Your sole job is to clean up, structure, and format the strategy text provided in the prompt into a beautiful, high-converting markdown layout.
+Your sole job is to clean up typography, bolding, and spacing of the text provided in the prompt.
 
-STRICT RULES:
+STRICT FORMATTING RULES:
 - Do NOT speak to the user, greet the user, or explain your role.
-- Do NOT ask questions or request additional content (NEVER say "Please provide...", "Paste the details...", etc.).
+- Do NOT ask questions or request additional content.
 - Do NOT output conversational filler.
-- If the input text is a short response (e.g. 1-5 words, a direct answer to a micro-question like "just say what industry in one word"), return that answer VERBATIM without adding document headers (#), table of contents, or structured markdown templates.
-- If the provided input is incomplete or missing, return the provided input text VERBATIM without modification.
-- Return ONLY the formatted markdown representation of the provided strategy.`;
+- DO NOT RE-ARCHITECT OR RESTRUCTURE THE INPUT: If the input contains a bulleted list, plain data table, or direct response, PRESERVE THAT EXACT STRUCTURE.
+- NEVER group items into unsolicited category tables (e.g. "Category | Campaign Name(s)"), cards, or document headers (# Ads Manager Audit) unless the input text itself explicitly contains those headers.
+- Return ONLY the clean, polished markdown representation of the provided input text verbatim.`;
 }
 
 // ============================================================
@@ -795,91 +795,74 @@ async function executeTool(
 ): Promise<string> {
   switch (toolName) {
     case 'get_campaign_hierarchy': {
-      // 1. Primary Source: Fetch live from Meta Graph API if credentials are provided
-      if (metaToken && metaAdAccountId) {
-        try {
-          const formattedAccountId = metaAdAccountId.startsWith('act_') ? metaAdAccountId : `act_${metaAdAccountId}`;
-          const url = `https://graph.facebook.com/v19.0/${formattedAccountId}/campaigns?fields=id,name,status,daily_budget,lifetime_budget,objective,adsets{id,name,status,daily_budget,targeting,insights{spend,impressions,clicks,cpc,cpm,ctr}},insights{spend,impressions,clicks,cpc,cpm,ctr}&access_token=${metaToken}`;
-          
-          const metaRes = await fetch(url);
-          if (metaRes.ok) {
-            const metaJson = await metaRes.json();
-            if (metaJson.data) {
-              const liveHierarchy = metaJson.data.map((c: any) => {
-                const cInsights = c.insights?.data?.[0] || {};
-                return {
-                  id: c.id,
-                  name: c.name,
-                  status: c.status,
-                  daily_budget: c.daily_budget ? Number(c.daily_budget) / 100 : undefined,
-                  objective: c.objective,
-                  performance_metrics: {
-                    spend: Number(cInsights.spend || 0),
-                    impressions: Number(cInsights.impressions || 0),
-                    clicks: Number(cInsights.clicks || 0),
-                    cpc: Number(cInsights.cpc || 0),
-                    cpm: Number(cInsights.cpm || 0),
-                    ctr: Number(cInsights.ctr || 0)
-                  },
-                  ad_sets: c.adsets?.data?.map((s: any) => {
-                    const sInsights = s.insights?.data?.[0] || {};
-                    return {
-                      id: s.id,
-                      name: s.name,
-                      status: s.status,
-                      daily_budget: s.daily_budget ? Number(s.daily_budget) / 100 : undefined,
-                      targeting: s.targeting,
-                      performance_metrics: {
-                        spend: Number(sInsights.spend || 0),
-                        impressions: Number(sInsights.impressions || 0),
-                        clicks: Number(sInsights.clicks || 0),
-                        cpc: Number(sInsights.cpc || 0),
-                        cpm: Number(sInsights.cpm || 0),
-                        ctr: Number(sInsights.ctr || 0)
-                      }
-                    };
-                  }) || []
-                };
-              });
-
-              return JSON.stringify({ data_source: 'LIVE_META_GRAPH_API', hierarchy: liveHierarchy });
-            }
-          } else {
-            const errText = await metaRes.text();
-            console.error("Meta Graph API error response:", errText);
-          }
-        } catch (e: any) {
-          console.error("Live Meta Graph API query failed, using Supabase fallback:", e.message);
-        }
+      if (!metaToken || !metaAdAccountId) {
+        return JSON.stringify({ 
+          error: "META_API_DISCONNECTED",
+          message: "Meta Ad Account is not connected. Please configure your Meta Access Token and Ad Account ID in Settings."
+        });
       }
 
-      // 2. Fallback Source: Fetch from Supabase Database if Meta token is unconfigured or call fails
-      const { data: campaigns } = await supabaseClient.from('campaigns').select('*').eq('user_id', userId);
-      const { data: adSets } = await supabaseClient.from('ad_sets').select('*').eq('user_id', userId);
-      const { data: ads } = await supabaseClient.from('ads').select('*').eq('user_id', userId);
-      
-      const now = new Date().getTime();
-      const calcAge = (createdAt: string) => Math.max(0, Math.floor((now - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24)));
+      try {
+        const formattedAccountId = metaAdAccountId.startsWith('act_') ? metaAdAccountId : `act_${metaAdAccountId}`;
+        const url = `https://graph.facebook.com/v19.0/${formattedAccountId}/campaigns?fields=id,name,status,daily_budget,lifetime_budget,objective,adsets{id,name,status,daily_budget,targeting,insights{spend,impressions,clicks,cpc,cpm,ctr}},insights{spend,impressions,clicks,cpc,cpm,ctr}&access_token=${metaToken}`;
+        
+        const metaRes = await fetch(url);
+        if (!metaRes.ok) {
+          const errText = await metaRes.text();
+          return JSON.stringify({ 
+            error: "META_GRAPH_API_ERROR",
+            status_code: metaRes.status,
+            meta_response: errText,
+            message: `Meta Graph API returned error status ${metaRes.status}: ${errText}`
+          });
+        }
 
-      const hierarchy = campaigns?.map((c: any) => ({
-        id: c.id,
-        name: c.name,
-        status: c.status,
-        daily_budget: c.daily_budget,
-        targeting: c.targeting,
-        performance_metrics: c.performance_metrics,
-        age_days: calcAge(c.created_at),
-        ad_sets: dbAdSets?.filter((s: any) => s.campaign_id === c.id).map((s: any) => ({
-          id: s.id,
-          name: s.name,
-          status: s.status,
-          performance_metrics: s.performance_metrics,
-          age_days: calcAge(s.created_at),
-          ads_count: ads?.filter((a: any) => a.ad_set_id === s.id).length
-        }))
-      }));
+        const metaJson = await metaRes.json();
+        if (!metaJson.data) {
+          return JSON.stringify({ data_source: 'LIVE_META_GRAPH_API', hierarchy: [] });
+        }
 
-      return JSON.stringify({ data_source: 'SUPABASE_DATABASE_FALLBACK', hierarchy });
+        const liveHierarchy = metaJson.data.map((c: any) => {
+          const cInsights = c.insights?.data?.[0] || {};
+          return {
+            id: c.id,
+            name: c.name,
+            status: c.status,
+            daily_budget: c.daily_budget ? Number(c.daily_budget) / 100 : undefined,
+            objective: c.objective,
+            performance_metrics: {
+              spend: Number(cInsights.spend || 0),
+              impressions: Number(cInsights.impressions || 0),
+              clicks: Number(cInsights.clicks || 0),
+              cpc: Number(cInsights.cpc || 0),
+              cpm: Number(cInsights.cpm || 0),
+              ctr: Number(cInsights.ctr || 0)
+            },
+            ad_sets: c.adsets?.data?.map((s: any) => {
+              const sInsights = s.insights?.data?.[0] || {};
+              return {
+                id: s.id,
+                name: s.name,
+                status: s.status,
+                daily_budget: s.daily_budget ? Number(s.daily_budget) / 100 : undefined,
+                targeting: s.targeting,
+                performance_metrics: {
+                  spend: Number(sInsights.spend || 0),
+                  impressions: Number(sInsights.impressions || 0),
+                  clicks: Number(sInsights.clicks || 0),
+                  cpc: Number(sInsights.cpc || 0),
+                  cpm: Number(sInsights.cpm || 0),
+                  ctr: Number(sInsights.ctr || 0)
+                }
+              };
+            }) || []
+          };
+        });
+
+        return JSON.stringify({ data_source: 'LIVE_META_GRAPH_API', hierarchy: liveHierarchy });
+      } catch (e: any) {
+        return JSON.stringify({ error: "LIVE_META_NETWORK_EXCEPTION", message: e.message });
+      }
     }
 
     case 'get_state_snapshots': {
@@ -1833,7 +1816,7 @@ serve(async (req) => {
             if (formatterRes.ok) {
               const data = await formatterRes.json()
               const formatted = data.choices[0].message.content || ''
-              if (formatted.trim().length > 20 && !formatted.includes("Please provide the content")) {
+              if (formatted.trim().length > 20) {
                 finalContent = formatted
               }
             }
