@@ -164,8 +164,14 @@ export const AgentChat: React.FC<AgentChatProps> = ({
     setInputText('');
   };
 
+  const [expandedStageCards, setExpandedStageCards] = useState<Record<string, boolean>>({});
+
   const toggleThoughts = (id: string) => {
     setExpandedThoughts((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const toggleStageCard = (cardId: string) => {
+    setExpandedStageCards((prev) => ({ ...prev, [cardId]: !prev[cardId] }));
   };
 
   // Load goal schedules for the current session
@@ -442,30 +448,148 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                       </button>
 
                       {isThoughtsExpanded && (
-                        <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '650px', overflowY: 'auto', paddingRight: '6px' }}>
+                        <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '750px', overflowY: 'auto', paddingRight: '6px' }}>
                           {msg.thinkingSteps.map((step, idx) => {
-                            const isHeader = step.startsWith('🧠') || step.startsWith('📚') || step.startsWith('📊') || step.startsWith('🛡️') || step.startsWith('🔬') || step.startsWith('🎯') || step.startsWith('✍️') || step.startsWith('📋') || step.startsWith('⚡') || step.startsWith('💭') || step.startsWith('[Planning]')
-                            const isToolCall = step.startsWith('🛠️')
+                            let audit: any = null;
+                            try {
+                              if (typeof step === 'string' && step.trim().startsWith('{')) {
+                                audit = JSON.parse(step);
+                              } else if (typeof step === 'object') {
+                                audit = step;
+                              }
+                            } catch (e) {}
+
+                            if (!audit || !audit.phase) {
+                              const isHeader = step.startsWith('🧠') || step.startsWith('📚') || step.startsWith('📊') || step.startsWith('🛡️') || step.startsWith('🔬') || step.startsWith('🎯') || step.startsWith('✍️') || step.startsWith('📋') || step.startsWith('⚡') || step.startsWith('💭') || step.startsWith('[Planning]');
+                              const isToolCall = step.startsWith('🛠️');
+                              return (
+                                <div
+                                  key={idx}
+                                  style={{
+                                    backgroundColor: isToolCall ? 'rgba(6, 182, 212, 0.05)' : 'rgba(31, 41, 55, 0.4)',
+                                    border: isToolCall ? '1px solid rgba(6, 182, 212, 0.2)' : '1px solid rgba(255, 255, 255, 0.05)',
+                                    borderRadius: '8px',
+                                    padding: '10px 12px',
+                                    fontSize: '12px',
+                                    color: isHeader ? '#38bdf8' : '#d1d5db',
+                                    lineHeight: '1.5'
+                                  }}
+                                >
+                                  <div style={{ fontWeight: isHeader ? 600 : 400, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' }}>
+                                    {step}
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            const cardId = `${msg.id}_step_${idx}_${audit.id || idx}`;
+                            const isExpanded = expandedStageCards[cardId] ?? true; // Default expanded for instant diagnostic inspection
+                            const isTool = audit.phase.includes('TOOL') || !!audit.tool_name;
+                            const isSkipped = audit.status === 'SKIPPED';
 
                             return (
                               <div
-                                key={idx}
+                                key={cardId}
                                 style={{
-                                  backgroundColor: isToolCall ? 'rgba(6, 182, 212, 0.05)' : 'rgba(31, 41, 55, 0.4)',
-                                  border: isToolCall ? '1px solid rgba(6, 182, 212, 0.2)' : '1px solid rgba(255, 255, 255, 0.05)',
+                                  backgroundColor: isTool ? 'rgba(6, 182, 212, 0.04)' : 'rgba(17, 24, 39, 0.7)',
+                                  border: isSkipped
+                                    ? '1px dashed rgba(156, 163, 175, 0.3)'
+                                    : isTool
+                                    ? '1px solid rgba(6, 182, 212, 0.25)'
+                                    : '1px solid rgba(255, 255, 255, 0.08)',
                                   borderRadius: '8px',
-                                  padding: '10px 12px',
-                                  fontSize: '12px',
-                                  color: isHeader ? '#38bdf8' : '#d1d5db',
-                                  fontFamily: 'system-ui, -apple-system, sans-serif',
-                                  lineHeight: '1.5'
+                                  overflow: 'hidden',
+                                  transition: 'all 0.2s ease'
                                 }}
                               >
-                                <div style={{ fontWeight: isHeader ? 600 : 400, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: isToolCall || step.includes('\n\n') ? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' : 'inherit' }}>
-                                  {step}
-                                </div>
+                                {/* Stage Card Header */}
+                                <button
+                                  onClick={() => toggleStageCard(cardId)}
+                                  style={{
+                                    width: '100%',
+                                    background: isTool ? 'rgba(6, 182, 212, 0.08)' : 'rgba(31, 41, 55, 0.5)',
+                                    border: 'none',
+                                    borderBottom: isExpanded ? '1px solid rgba(255, 255, 255, 0.06)' : 'none',
+                                    padding: '10px 14px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '10px',
+                                    cursor: 'pointer',
+                                    textAlign: 'left'
+                                  }}
+                                >
+                                  <span style={{ fontSize: '14px' }}>{audit.icon || '📌'}</span>
+                                  <span style={{ fontSize: '12px', fontWeight: 600, color: isTool ? '#38bdf8' : '#f3f4f6', flex: 1 }}>
+                                    {audit.title || audit.phase}
+                                  </span>
+                                  <span
+                                    style={{
+                                      fontSize: '10px',
+                                      fontWeight: 600,
+                                      padding: '2px 8px',
+                                      borderRadius: '4px',
+                                      backgroundColor: isSkipped ? 'rgba(156, 163, 175, 0.15)' : isTool ? 'rgba(6, 182, 212, 0.2)' : 'rgba(16, 185, 129, 0.2)',
+                                      color: isSkipped ? '#9ca3af' : isTool ? '#38bdf8' : '#34d399'
+                                    }}
+                                  >
+                                    {audit.status || 'COMPLETED'}
+                                  </span>
+                                  {isExpanded ? <ChevronDown style={{ width: '14px', height: '14px', color: '#9ca3af' }} /> : <ChevronRight style={{ width: '14px', height: '14px', color: '#9ca3af' }} />}
+                                </button>
+
+                                {/* Stage Card Body */}
+                                {isExpanded && (
+                                  <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '12px' }}>
+                                    {/* Tool Execution Details */}
+                                    {audit.tool_name && (
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                        <div style={{ fontSize: '11px', fontWeight: 600, color: '#38bdf8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                          🛠️ Tool Input Arguments
+                                        </div>
+                                        <pre style={{ margin: 0, padding: '10px', backgroundColor: 'rgba(0, 0, 0, 0.4)', borderRadius: '6px', color: '#a5f3fc', fontSize: '11px', fontFamily: 'monospace', overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                          {JSON.stringify(audit.tool_args, null, 2)}
+                                        </pre>
+                                      </div>
+                                    )}
+
+                                    {/* Raw Output / Reasoning */}
+                                    {audit.raw_output && (
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                        <div style={{ fontSize: '11px', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                          🧠 Raw Stage Output & Reasoning (Untruncated)
+                                        </div>
+                                        <div style={{ padding: '12px', backgroundColor: 'rgba(0, 0, 0, 0.35)', border: '1px solid rgba(255, 255, 255, 0.05)', borderRadius: '6px', color: '#e5e7eb', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace', fontSize: '11px', lineHeight: '1.6', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                          {audit.raw_output}
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* System Prompt & Input Context Drawer */}
+                                    {(audit.system_prompt || audit.user_input) && (
+                                      <details style={{ marginTop: '4px', cursor: 'pointer' }}>
+                                        <summary style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600, outline: 'none' }}>
+                                          🔍 Inspect Stage System Prompt & Input Context
+                                        </summary>
+                                        <div style={{ marginTop: '8px', padding: '10px', backgroundColor: 'rgba(0, 0, 0, 0.5)', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '11px', color: '#9ca3af' }}>
+                                          {audit.system_prompt && (
+                                            <div>
+                                              <strong style={{ color: '#d1d5db' }}>System Prompt:</strong>
+                                              <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#9ca3af', fontFamily: 'monospace' }}>{audit.system_prompt}</pre>
+                                            </div>
+                                          )}
+                                          {audit.user_input && (
+                                            <div>
+                                              <strong style={{ color: '#d1d5db' }}>Input Context:</strong>
+                                              <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#9ca3af', fontFamily: 'monospace' }}>{audit.user_input}</pre>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </details>
+                                    )}
+                                  </div>
+                                )}
                               </div>
-                            )
+                            );
                           })}
                         </div>
                       )}

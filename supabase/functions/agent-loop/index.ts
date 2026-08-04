@@ -165,6 +165,28 @@ const ACTION_TOOLS = AGENT_TOOLS.filter(t =>
   ['create_campaign', 'create_ad_set', 'create_ad', 'propose_action_card', 'set_goal_schedule', 'report_no_action'].includes(t.function.name)
 )
 
+function logStageAudit(
+  thinkingSteps: string[],
+  stage: {
+    phase: string,
+    icon: string,
+    title: string,
+    status?: string,
+    system_prompt?: string,
+    user_input?: string,
+    raw_output?: string,
+    tool_name?: string,
+    tool_args?: any,
+    tool_result?: any
+  }
+) {
+  thinkingSteps.push(JSON.stringify({
+    id: Math.random().toString(36).substring(2, 9),
+    status: stage.status || 'COMPLETED',
+    ...stage
+  }))
+}
+
 // ============================================================
 // MARKETING KNOWLEDGE ENGINE (Phase 0)
 // ============================================================
@@ -1294,41 +1316,36 @@ serve(async (req) => {
     }))
 
     const toolExecutions: any[] = []
-    const thinkingSteps: string[] = []
+    const thinkingSteps: any[] = []
+    function logStageAudit(steps: any[], audit: any) {
+      steps.push({ ...audit, timestamp: new Date().toISOString() })
+    }
     let proposals: any[] = []
     let finalContent = ''
 
-    if (reasoning_mode === 'deep') {
-      thinkingSteps.push('🧠 Running in Deep Reasoning Mode...')
+    if (reasoning_mode === 'deep' || true) {
+      logStageAudit(thinkingSteps, {
+        phase: 'PHASE_0_KNOWLEDGE',
+        icon: '📚',
+        title: 'Phase 0: Intent Classification & Knowledge Intelligence',
+        user_input: prompt,
+        raw_output: `Classified Dimensions:\n${JSON.stringify(dimensions, null, 2)}\n\nRetrieved Marketing Knowledge Context:\n${knowledgeContext || 'No frameworks matched — proceeding with LLM general knowledge.'}`
+      })
 
-      // ===== PHASE 0: Marketing Knowledge Engine =====
-      thinkingSteps.push('📚 Phase 0: Classifying intent & retrieving marketing intelligence...')
-
-      // Count existing campaigns for stage classification
-      const { count: campaignCount } = await supabaseClient
-        .from('campaigns')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', user.id)
-
-      const dimensions = classifyUserIntent(prompt, businessProfile, campaignCount || 0)
-      const knowledgeContext = await retrieveKnowledge(supabaseClient, dimensions)
-      if (knowledgeContext) {
-        thinkingSteps.push(`📚 Phase 0: Classified Dimensions & Retrieved Frameworks:\n- Dimensions: ${JSON.stringify(dimensions, null, 2)}\n\n- Retained Knowledge Context:\n${knowledgeContext}`)
-      } else {
-        thinkingSteps.push(`📚 Phase 0: Classified Dimensions:\n${JSON.stringify(dimensions, null, 2)}\n(No knowledge frameworks matched — proceeding with core knowledge).`)
-      }
-
-      // Build the enriched Planner input with knowledge context
       const plannerUserMessage = knowledgeContext
+        ? `## MARKETING INTELLIGENCE CONTEXT (Retrieved Frameworks)\nThe following are universal marketing frameworks retrieved based on the user's context. Use these as reference material to inform your strategic blueprint — they are principles, not commands.\n\n${knowledgeContext}\n\n## CLASSIFIED DIMENSIONS\n- Budget Tier: ${dimensions.budget_tier}${dimensions.extracted_budget ? ` (${dimensions.extracted_budget.amount} ${dimensions.extracted_budget.currency} ≈ $${dimensions.extracted_budget.usd_equivalent} USD)` : ''}\n- Market Type: ${dimensions.market_type}\n- User Intent: ${dimensions.intent_types.join(', ')}\n- Campaign Stage: ${dimensions.campaign_stage}\n- Industry: ${dimensions.industry}\n\n## USER REQUEST\n${prompt}`
         : prompt
 
-      // ===== PHASE 1: Strategic Planner =====
-      thinkingSteps.push('[Planning] Strategic planner analyzing requirements with knowledge context...')
-      
       let planJson: any = null
 
       if (isPurelyConversationalPrompt(prompt)) {
-        thinkingSteps.push('💬 Pure conversational acknowledgment detected by pre-filter. Bypassing strategic deep dive.')
+        logStageAudit(thinkingSteps, {
+          phase: 'PHASE_1_PLANNER',
+          icon: '💬',
+          title: 'Phase 1: Strategic Planner (Conversational)',
+          status: 'COMPLETED',
+          raw_output: 'CONVERSATIONAL: Pure conversational acknowledgment detected.'
+        })
         planJson = {
           intent: 'CONVERSATION',
           raw_thinking: 'CONVERSATIONAL: Pure conversational acknowledgment detected.',
@@ -1338,6 +1355,7 @@ serve(async (req) => {
       } else {
         try {
           const reqDetails = getLLMRequestDetails(openRouterKey, model)
+          const plannerSystemPrompt = generatePlannerPrompt(businessProfile, historical_context)
           const plannerRes = await fetch(reqDetails.url, {
             method: 'POST',
             headers: reqDetails.headers,
@@ -1345,7 +1363,7 @@ serve(async (req) => {
               model: reqDetails.model,
               max_tokens: maxTokens,
               messages: [
-                { role: 'system', content: generatePlannerPrompt(businessProfile, historical_context) },
+                { role: 'system', content: plannerSystemPrompt },
                 ...history,
                 { role: 'user', content: plannerUserMessage }
               ]
@@ -1355,7 +1373,6 @@ serve(async (req) => {
           const plannerData = await plannerRes.json()
           const rawContent = plannerData.choices[0].message.content || ''
           
-          // Raw text intent detection (no JSON parsing)
           const plannerThinking = rawContent.trim()
           const isConversational = plannerThinking.toUpperCase().startsWith('CONVERSATIONAL:')
           const isAnalytical = plannerThinking.toUpperCase().startsWith('ANALYTICAL:')
@@ -1372,10 +1389,22 @@ serve(async (req) => {
           }
           
           const intentLabel = isConversational ? 'Conversational' : (isAnalytical ? 'Analytical' : 'Strategic')
-          thinkingSteps.push(`💭 Strategic Planner Thinking (${intentLabel}):\n\n${plannerThinking}`)
+          logStageAudit(thinkingSteps, {
+            phase: 'PHASE_1_PLANNER',
+            icon: '💭',
+            title: `Phase 1: Strategic Planner Reasoning (${intentLabel})`,
+            system_prompt: plannerSystemPrompt,
+            user_input: plannerUserMessage,
+            raw_output: plannerThinking
+          })
         } catch (err: any) {
           console.error('Planner phase failed, using fallback:', err.message)
-          thinkingSteps.push('[Planning] Strategic planner phase encountered an error. Proceeding with fallback plan.')
+          logStageAudit(thinkingSteps, {
+            phase: 'PHASE_1_PLANNER',
+            icon: '💭',
+            title: 'Phase 1: Strategic Planner Reasoning (Fallback)',
+            raw_output: 'STRATEGIC: Standard growth strategy analysis. Campaign (Sales), Ad Sets, Ad Creatives matched to user budget scale.'
+          })
           planJson = {
             intent: 'CAMPAIGN_STRATEGY',
             raw_thinking: 'STRATEGIC: Standard growth strategy analysis. Campaign (Sales), Ad Sets, Ad Creatives matched to user budget scale.',
@@ -1387,7 +1416,12 @@ serve(async (req) => {
 
       // ===== CONVERSATIONAL BYPASS & BLACKBOARD INITIALIZATION =====
       if (planJson.intent === 'CONVERSATION') {
-        thinkingSteps.push('💬 Conversational intent detected. Bypassing strategic deep dive.')
+        logStageAudit(thinkingSteps, {
+          phase: 'PHASE_BYPASS',
+          icon: '💬',
+          title: 'Conversational intent detected. Bypassing strategic deep dive.',
+          status: 'COMPLETED'
+        })
         finalContent = planJson.conversational_response || "I'm here to help. Could you clarify what you mean?"
       } else {
         // Shared Working Memory (Blackboard State)
@@ -1406,7 +1440,8 @@ serve(async (req) => {
 
         // ===== PHASE 1.5: Pre-Execution Plan Generator (SKIP for ANALYTICAL intent) =====
         if (!isAnalyticalIntent) {
-          thinkingSteps.push('🛡️ Pre-Execution: Plan Generator forming strategic blueprint from Planner thinking...')
+          const planGenSystemPrompt = generatePreExecutionPlanGeneratorPrompt(businessProfile)
+          const planGenInput = `## Planner's Deep Thinking\nThe Strategic Planner analyzed the user's request and produced the following first-principles thinking:\n\n${conversationBrain.planner_thinking}\n\n## User's Original Prompt\nThis was the user's original request on which the Planner generated the above thinking:\n\n${prompt}`
           try {
             const reqDetails = getLLMRequestDetails(openRouterKey, model)
             const planGenRes = await fetch(reqDetails.url, {
@@ -1416,32 +1451,50 @@ serve(async (req) => {
                 model: reqDetails.model,
                 max_tokens: maxTokens,
                 messages: [
-                  { role: 'system', content: generatePreExecutionPlanGeneratorPrompt(businessProfile) },
-                  { role: 'user', content: `## Planner's Deep Thinking\nThe Strategic Planner analyzed the user's request and produced the following first-principles thinking:\n\n${conversationBrain.planner_thinking}\n\n## User's Original Prompt\nThis was the user's original request on which the Planner generated the above thinking:\n\n${prompt}` }
+                  { role: 'system', content: planGenSystemPrompt },
+                  { role: 'user', content: planGenInput }
                 ]
               })
             })
             if (planGenRes.ok) {
               const data = await planGenRes.json()
               conversationBrain.pre_execution_plan = data.choices[0].message.content || conversationBrain.planner_thinking
-              thinkingSteps.push(`🛡️ Pre-Execution Strategic Blueprint:\n\n${conversationBrain.pre_execution_plan}`)
+              logStageAudit(thinkingSteps, {
+                phase: 'PHASE_1_5_BLUEPRINT',
+                icon: '🛡️',
+                title: 'Phase 1.5: Pre-Execution Strategic Blueprint',
+                system_prompt: planGenSystemPrompt,
+                user_input: planGenInput,
+                raw_output: conversationBrain.pre_execution_plan
+              })
             } else {
               conversationBrain.pre_execution_plan = conversationBrain.planner_thinking
-              thinkingSteps.push(`🛡️ Pre-Execution Strategic Blueprint (Fallback to Planner Thinking):\n\n${conversationBrain.pre_execution_plan}`)
+              logStageAudit(thinkingSteps, {
+                phase: 'PHASE_1_5_BLUEPRINT',
+                icon: '🛡️',
+                title: 'Phase 1.5: Pre-Execution Strategic Blueprint (Fallback)',
+                raw_output: conversationBrain.pre_execution_plan
+              })
             }
           } catch (err: any) {
             console.error('Pre-execution plan generator error:', err.message)
             conversationBrain.pre_execution_plan = conversationBrain.planner_thinking
           }
         } else {
-          thinkingSteps.push('📊 Analytical intent detected. Skipping Pre-Execution Plan — going straight to data gathering.')
+          logStageAudit(thinkingSteps, {
+            phase: 'PHASE_1_5_BLUEPRINT',
+            icon: '📊',
+            title: 'Phase 1.5: Pre-Execution Strategic Blueprint',
+            status: 'SKIPPED',
+            raw_output: 'Analytical intent detected — skipping Pre-Execution Plan to gather live ad account metrics directly.'
+          })
           conversationBrain.pre_execution_plan = conversationBrain.planner_thinking
         }
 
         // ===== PHASE 2: Research Agent (Evidence Gathering) =====
-        thinkingSteps.push('🔬 Phase 2: Research Agent gathering evidence and live ad account metrics...')
+        const researchSystemPrompt = generateResearchAgentPrompt(businessProfile) + `\n\nSTRATEGIC PLAN TO RESEARCH:\n${conversationBrain.pre_execution_plan}`
         const researchMessages: any[] = [
-          { role: 'system', content: generateResearchAgentPrompt(businessProfile) + `\n\nSTRATEGIC PLAN TO RESEARCH:\n${conversationBrain.pre_execution_plan}` },
+          { role: 'system', content: researchSystemPrompt },
           ...history
         ]
 
@@ -1481,7 +1534,16 @@ serve(async (req) => {
                 settings?.meta_ad_account_id || undefined
               )
 
-              thinkingSteps.push(`🛠️ Research Tool Executed: ${toolName}\n- Input Arguments: ${JSON.stringify(toolArgs)}\n- Raw Output Payload:\n${toolResult}`)
+              logStageAudit(thinkingSteps, {
+                phase: `PHASE_2_TOOL_${toolName.toUpperCase()}`,
+                icon: '🛠️',
+                title: `Phase 2 Tool Execution: ${toolName}`,
+                status: 'EXECUTED',
+                tool_name: toolName,
+                tool_args: toolArgs,
+                tool_result: toolResult,
+                raw_output: toolResult
+              })
               
               try {
                 const parsed = JSON.parse(toolResult)
@@ -1496,10 +1558,10 @@ serve(async (req) => {
             break
           }
         }
-        thinkingSteps.push(`🔬 Research Agent compiled ${conversationBrain.evidence.length} evidence data points into Shared Memory.`)
 
         // ===== PHASE 3: Strategy Agent (Deep Reasoning) =====
-        thinkingSteps.push('🧠 Phase 3: Master Strategy Agent reasoning from first principles with gathered evidence...')
+        const strategySystemPrompt = generateStrategyAgentPrompt(businessProfile)
+        const strategyInput = `## COMPLETE CONTEXT CHAIN:\n\n### 1. User's Original Request\n${prompt}\n\n### 2. Strategic Planner's First-Principles Thinking\n${conversationBrain.planner_thinking}\n\n### 3. Pre-Execution Plan Blueprint\n${conversationBrain.pre_execution_plan}\n\n### 4. Research Agent's Gathered Evidence\n${JSON.stringify(conversationBrain.evidence, null, 2)}\n\n### 5. Knowledge Context\n${knowledgeContext}`
         try {
           const reqDetails = getLLMRequestDetails(openRouterKey, model)
           const strategyRes = await fetch(reqDetails.url, {
@@ -1509,24 +1571,30 @@ serve(async (req) => {
               model: reqDetails.model,
               max_tokens: maxTokens,
               messages: [
-                { role: 'system', content: generateStrategyAgentPrompt(businessProfile) },
-                { role: 'user', content: `## COMPLETE CONTEXT CHAIN:\n\n### 1. User's Original Request\n${prompt}\n\n### 2. Strategic Planner's First-Principles Thinking\nThis was generated by the Strategic Planner who performed deep first-principles reasoning about the user's request:\n${conversationBrain.planner_thinking}\n\n### 3. Pre-Execution Plan Generator's Strategic Blueprint\nThis plan was proposed by the Pre-Execution Plan Generator BEFORE the research agent performed its job. It was built on the Planner's thinking but without live account data:\n${conversationBrain.pre_execution_plan}\n\n### 4. Research Agent's Gathered Evidence\nThis data was gathered by the Research Agent which was assigned to collect live empirical evidence from the user's ad account:\n${JSON.stringify(conversationBrain.evidence, null, 2)}\n\n### 5. Marketing Knowledge Context\n${knowledgeContext}\n\n### 6. Classified Dimensions\n${JSON.stringify(conversationBrain.classified_dimensions)}\n\nFormulate or refine the core masterclass strategy based on all of the above.` }
+                { role: 'system', content: strategySystemPrompt },
+                { role: 'user', content: strategyInput }
               ]
             })
           })
           if (strategyRes.ok) {
             const data = await strategyRes.json()
             conversationBrain.strategy_proposal = data.choices[0].message.content || conversationBrain.pre_execution_plan
-            thinkingSteps.push(`🧠 Master Strategy Proposal (Refined with Research Evidence):\n\n${conversationBrain.strategy_proposal}`)
+            logStageAudit(thinkingSteps, {
+              phase: 'PHASE_3_MASTER_STRATEGY',
+              icon: '🧠',
+              title: 'Phase 3: Master Strategy Proposal (Refined with Research)',
+              system_prompt: strategySystemPrompt,
+              user_input: strategyInput,
+              raw_output: conversationBrain.strategy_proposal
+            })
           }
         } catch (err: any) {
           console.error('Strategy Agent failed:', err.message)
           conversationBrain.strategy_proposal = conversationBrain.pre_execution_plan
         }
 
-        // ===== PHASE 4: Board of Constructive Expert Debaters (SKIP for ANALYTICAL intent) =====
+        // ===== PHASE 4: Board of Constructive Expert Debaters =====
         if (!isAnalyticalIntent) {
-          thinkingSteps.push('📋 Phase 4: Board of Constructive Expert Debaters evaluating strategy...')
           const reviewerConfigs = [
             { id: 'strategy', label: '🎯 CSO Strategy Expert', promptFn: generateStrategyReviewerPrompt },
             { id: 'copy', label: '✍️ Lead Copywriting Expert', promptFn: generateCopyReviewerPrompt },
@@ -1537,6 +1605,8 @@ serve(async (req) => {
           ]
 
           const reviewerPromises = reviewerConfigs.map(async (config) => {
+            const sysPrompt = config.promptFn(businessProfile)
+            const usrInput = `User's Request: ${prompt}\n\nStrategy Proposal to Review:\n${conversationBrain.strategy_proposal}\n\nResearch Evidence:\n${JSON.stringify(conversationBrain.evidence)}`
             try {
               const reqDetails = getLLMRequestDetails(openRouterKey, model)
               const reviewerRes = await fetch(reqDetails.url, {
@@ -1546,40 +1616,52 @@ serve(async (req) => {
                   model: reqDetails.model,
                   max_tokens: reviewerMaxTokens,
                   messages: [
-                    { role: 'system', content: config.promptFn(businessProfile) },
-                    { role: 'user', content: `User's Original Request: ${prompt}\n\nStrategy Proposal to Review:\n${conversationBrain.strategy_proposal}\n\nResearch Evidence:\n${JSON.stringify(conversationBrain.evidence)}` }
+                    { role: 'system', content: sysPrompt },
+                    { role: 'user', content: usrInput }
                   ]
                 })
               })
               if (!reviewerRes.ok) throw new Error(await reviewerRes.text())
               const data = await reviewerRes.json()
               const rawReview = data.choices[0].message.content || 'Validated. No concerns.'
-              return { role: config.id, label: config.label, raw_review: rawReview }
+              return { role: config.id, label: config.label, sysPrompt, usrInput, raw_review: rawReview }
             } catch (err: any) {
-              return { role: config.id, label: config.label, raw_review: 'Validated. No concerns.' }
+              return { role: config.id, label: config.label, sysPrompt, usrInput, raw_review: 'Validated. No concerns.' }
             }
           })
 
           const reviews = await Promise.all(reviewerPromises)
           for (const r of reviews) {
             conversationBrain.expert_contributions.push({ expert: r.label, review: r.raw_review })
-            thinkingSteps.push(`${r.label}:\n\n${r.raw_review || 'Validated. No concerns.'}`)  
+            logStageAudit(thinkingSteps, {
+              phase: `PHASE_4_REVIEWER_${r.role.toUpperCase()}`,
+              icon: '📋',
+              title: `Phase 4 Reviewer: ${r.label}`,
+              system_prompt: r.sysPrompt,
+              user_input: r.usrInput,
+              raw_output: r.raw_review
+            })
           }
         } else {
-          thinkingSteps.push('📊 Analytical intent — skipping Expert Reviewers. Proceeding directly to Response Agent.')
+          logStageAudit(thinkingSteps, {
+            phase: 'PHASE_4_EXPERT_REVIEWERS',
+            icon: '📋',
+            title: 'Phase 4: Board of Expert Reviewers',
+            status: 'SKIPPED',
+            raw_output: 'Analytical intent — skipping Expert Reviewers. Proceeding directly to Response Agent.'
+          })
         }
 
         // ===== PHASE 5: Execution Worker & Response Agent =====
-        thinkingSteps.push('⚡ Phase 5: Response Agent synthesizing Shared Memory into final execution...')
         const responseWorkerPrompt = generateSystemPrompt(businessProfile, historical_context) +
           `\n\n## SHARED WORKING MEMORY (BLACKBOARD STATE):\n` +
-          `- User's Original Request: ${prompt}\n(This was the user's original request. Everything up to this point has been processed according to this. The user prompt is provided as context only \u2014 do not re-analyze it for new decisions.)\n\n` +
+          `- User's Original Request: ${prompt}\n\n` +
           `- Core Strategy Proposal:\n${conversationBrain.strategy_proposal}\n\n` +
           `- Expert Contributions & Reviews:\n${conversationBrain.expert_contributions.map((e: any) => `**${e.expert}:** ${e.review}`).join('\n\n')}\n\n` +
           `## CRITICAL EXECUTION RULES:\n` +
-          `1. PROPORTIONAL RESPONSE: If the user's original request is a data/observation question (e.g. "analyse my campaigns", "what ads exist?", "show me performance"), LEAD with a clean, plain data presentation of what exists in the account. Then provide brief, focused observations. Do NOT produce a full strategy blueprint for a simple data question.\n` +
-          `2. NO REDUNDANT TOOL CALLS: The Research Agent has already gathered all live account data. It is in the Shared Working Memory above. Do NOT re-call get_campaign_hierarchy or get_account_summary_snapshots. Only use creation/action tools (create_campaign, propose_action_card, set_goal_schedule, etc.) if the strategy requires creating or modifying entities.\n` +
-          `3. SYNTHESIZE: Combine research evidence, core strategy, and expert contributions into your final response. If creation tools are needed, execute them now.`;
+          `1. PROPORTIONAL RESPONSE: If the user's original request is a data/observation question, LEAD with a clean, plain data presentation of what exists in the account.\n` +
+          `2. NO REDUNDANT TOOL CALLS: The Research Agent has already gathered all live account data. Only use creation/action tools if needed.\n` +
+          `3. SYNTHESIZE: Combine research evidence, core strategy, and expert contributions into your final response.`;
 
         const responseMessages: any[] = [
           { role: 'system', content: responseWorkerPrompt },
@@ -1618,11 +1700,29 @@ serve(async (req) => {
                 settings?.meta_access_token || undefined,
                 settings?.meta_ad_account_id || undefined
               )
-              thinkingSteps.push(`🛠️ Execution Tool Executed: ${toolName}\n- Input Arguments: ${JSON.stringify(toolArgs)}\n- Raw Output Payload:\n${toolResult}`)
+              logStageAudit(thinkingSteps, {
+                phase: `PHASE_5_TOOL_${toolName.toUpperCase()}`,
+                icon: '🛠️',
+                title: `Phase 5 Execution Tool: ${toolName}`,
+                status: 'EXECUTED',
+                tool_name: toolName,
+                tool_args: toolArgs,
+                tool_result: toolResult,
+                raw_output: toolResult
+              })
               toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult, status: 'success' })
             }
           }
-        } 
+        }
+
+        logStageAudit(thinkingSteps, {
+          phase: 'PHASE_5_RESPONSE_WORKER',
+          icon: '⚡',
+          title: 'Phase 5: Response Agent & Execution Worker Synthesis',
+          system_prompt: responseWorkerPrompt,
+          user_input: `Prompt: ${prompt}\n\nCore Strategy Proposal:\n${conversationBrain.strategy_proposal}`,
+          raw_output: finalContent || 'Executing worker tools and generating strategy response.'
+        }) 
         
         if (!finalContent || finalContent.trim().length === 0) {
           finalContent = conversationBrain.strategy_proposal || conversationBrain.pre_execution_plan || "Strategy successfully formulated."
