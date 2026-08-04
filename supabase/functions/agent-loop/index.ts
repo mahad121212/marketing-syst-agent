@@ -796,15 +796,20 @@ async function executeTool(
 
       // Build nested hierarchy
       const hierarchy = campaigns?.map((c: any) => ({
-        ...c,
+        id: c.id,
+        name: c.name,
+        status: c.status,
+        daily_budget: c.daily_budget,
+        targeting: c.targeting ? { geo: c.targeting.geo, locations: c.targeting.locations, interests: c.targeting.interests, age_range: c.targeting.age_range } : undefined,
+        performance_metrics: c.performance_metrics ? { spend: c.performance_metrics.spend, roas: c.performance_metrics.roas, cpa: c.performance_metrics.cpa, ctr: c.performance_metrics.ctr } : undefined,
         age_days: calcAge(c.created_at),
         ad_sets: adSets?.filter((s: any) => s.campaign_id === c.id).map((s: any) => ({
-          ...s,
+          id: s.id,
+          name: s.name,
+          status: s.status,
+          performance_metrics: s.performance_metrics ? { spend: s.performance_metrics.spend, roas: s.performance_metrics.roas, cpa: s.performance_metrics.cpa, ctr: s.performance_metrics.ctr } : undefined,
           age_days: calcAge(s.created_at),
-          ads: ads?.filter((a: any) => a.ad_set_id === s.id).map((a: any) => ({
-            ...a,
-            age_days: calcAge(a.created_at)
-          }))
+          ads_count: ads?.filter((a: any) => a.ad_set_id === s.id).length
         }))
       }))
 
@@ -1432,6 +1437,7 @@ serve(async (req) => {
           planner_thinking: planJson.raw_thinking,
           pre_execution_plan: '',
           evidence: [],
+          research_synthesis: '',
           strategy_proposal: '',
           expert_contributions: []
         }
@@ -1534,6 +1540,7 @@ serve(async (req) => {
                 settings?.meta_ad_account_id || undefined
               )
 
+              let researchText = assistantMessage.content || ''
               logStageAudit(thinkingSteps, {
                 phase: `PHASE_2_TOOL_${toolName.toUpperCase()}`,
                 icon: '🛠️',
@@ -1542,7 +1549,7 @@ serve(async (req) => {
                 tool_name: toolName,
                 tool_args: toolArgs,
                 tool_result: toolResult,
-                raw_output: toolResult
+                raw_output: (researchText ? `Agent Reasoning:\n${researchText}\n\nTool Result:\n` : '') + toolResult
               })
               
               try {
@@ -1551,17 +1558,24 @@ serve(async (req) => {
               } catch {}
 
               toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult, status: 'success' })
-              conversationBrain.evidence.push({ tool: toolName, args: toolArgs, result: toolResult })
+              conversationBrain.evidence.push({ tool: toolName, args: toolArgs, result: toolResult, reasoning: researchText })
               researchMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResult })
             }
           } else {
+            conversationBrain.research_synthesis = assistantMessage.content || ''
+            logStageAudit(thinkingSteps, {
+              phase: 'PHASE_2_SYNTHESIS',
+              icon: '🔬',
+              title: 'Phase 2: Research Agent Synthesis',
+              raw_output: conversationBrain.research_synthesis
+            })
             break
           }
         }
 
         // ===== PHASE 3: Strategy Agent (Deep Reasoning) =====
         const strategySystemPrompt = generateStrategyAgentPrompt(businessProfile)
-        const strategyInput = `## COMPLETE CONTEXT CHAIN:\n\n### 1. User's Original Request\n${prompt}\n\n### 2. Strategic Planner's First-Principles Thinking\n${conversationBrain.planner_thinking}\n\n### 3. Pre-Execution Plan Blueprint\n${conversationBrain.pre_execution_plan}\n\n### 4. Research Agent's Gathered Evidence\n${JSON.stringify(conversationBrain.evidence, null, 2)}\n\n### 5. Knowledge Context\n${knowledgeContext}`
+        const strategyInput = `## COMPLETE CONTEXT CHAIN:\n\n### 1. User's Original Request\n${prompt}\n\n### 2. Strategic Planner's First-Principles Thinking\n${conversationBrain.planner_thinking}\n\n### 3. Pre-Execution Plan Blueprint\n${conversationBrain.pre_execution_plan}\n\n### 4. Research Agent's Synthesis\n${conversationBrain.research_synthesis}\n\n### 5. Research Evidence Data\n${JSON.stringify(conversationBrain.evidence, null, 2)}\n\n### 6. Knowledge Context\n${knowledgeContext}`
         try {
           const reqDetails = getLLMRequestDetails(openRouterKey, model)
           const strategyRes = await fetch(reqDetails.url, {
@@ -1606,7 +1620,7 @@ serve(async (req) => {
 
           const reviewerPromises = reviewerConfigs.map(async (config) => {
             const sysPrompt = config.promptFn(businessProfile)
-            const usrInput = `User's Request: ${prompt}\n\nStrategy Proposal to Review:\n${conversationBrain.strategy_proposal}\n\nResearch Evidence:\n${JSON.stringify(conversationBrain.evidence)}`
+            const usrInput = `User's Request: ${prompt}\n\nStrategy Proposal to Review:\n${conversationBrain.strategy_proposal}\n\nResearch Context (Synthesis):\n${conversationBrain.research_synthesis}`
             try {
               const reqDetails = getLLMRequestDetails(openRouterKey, model)
               const reviewerRes = await fetch(reqDetails.url, {
