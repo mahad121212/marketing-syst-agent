@@ -800,14 +800,14 @@ async function executeTool(
         name: c.name,
         status: c.status,
         daily_budget: c.daily_budget,
-        targeting: c.targeting ? { geo: c.targeting.geo, locations: c.targeting.locations, interests: c.targeting.interests, age_range: c.targeting.age_range } : undefined,
-        performance_metrics: c.performance_metrics ? { spend: c.performance_metrics.spend, roas: c.performance_metrics.roas, cpa: c.performance_metrics.cpa, ctr: c.performance_metrics.ctr } : undefined,
+        targeting: c.targeting,
+        performance_metrics: c.performance_metrics,
         age_days: calcAge(c.created_at),
         ad_sets: adSets?.filter((s: any) => s.campaign_id === c.id).map((s: any) => ({
           id: s.id,
           name: s.name,
           status: s.status,
-          performance_metrics: s.performance_metrics ? { spend: s.performance_metrics.spend, roas: s.performance_metrics.roas, cpa: s.performance_metrics.cpa, ctr: s.performance_metrics.ctr } : undefined,
+          performance_metrics: s.performance_metrics,
           age_days: calcAge(s.created_at),
           ads_count: ads?.filter((a: any) => a.ad_set_id === s.id).length
         }))
