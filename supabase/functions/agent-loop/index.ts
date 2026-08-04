@@ -844,6 +844,9 @@ async function executeTool(
 
               return JSON.stringify({ data_source: 'LIVE_META_GRAPH_API', hierarchy: liveHierarchy });
             }
+          } else {
+            const errText = await metaRes.text();
+            console.error("Meta Graph API error response:", errText);
           }
         } catch (e: any) {
           console.error("Live Meta Graph API query failed, using Supabase fallback:", e.message);
@@ -866,7 +869,7 @@ async function executeTool(
         targeting: c.targeting,
         performance_metrics: c.performance_metrics,
         age_days: calcAge(c.created_at),
-        ad_sets: adSets?.filter((s: any) => s.campaign_id === c.id).map((s: any) => ({
+        ad_sets: dbAdSets?.filter((s: any) => s.campaign_id === c.id).map((s: any) => ({
           id: s.id,
           name: s.name,
           status: s.status,
@@ -1811,30 +1814,40 @@ serve(async (req) => {
         }
 
         // ===== PHASE 6: Formatter =====
-        thinkingSteps.push('✍️ Formatting finalized ad strategy layout...')
-        try {
-          const reqDetails = getLLMRequestDetails(openRouterKey, model)
-          const formatterRes = await fetch(reqDetails.url, {
-            method: 'POST',
-            headers: reqDetails.headers,
-            body: JSON.stringify({
-              model: reqDetails.model,
-              max_tokens: maxTokens,
-              messages: [
-                { role: 'system', content: generateFormatterPrompt() },
-                { role: 'user', content: `Structure and format this content beautifully:\n\n${finalContent}` }
-              ]
+        if (!isAnalyticalIntent) {
+          thinkingSteps.push('✍️ Formatting finalized ad strategy layout...')
+          try {
+            const reqDetails = getLLMRequestDetails(openRouterKey, model)
+            const formatterRes = await fetch(reqDetails.url, {
+              method: 'POST',
+              headers: reqDetails.headers,
+              body: JSON.stringify({
+                model: reqDetails.model,
+                max_tokens: maxTokens,
+                messages: [
+                  { role: 'system', content: generateFormatterPrompt() },
+                  { role: 'user', content: `Structure and format this content beautifully:\n\n${finalContent}` }
+                ]
+              })
             })
-          })
-          if (formatterRes.ok) {
-            const data = await formatterRes.json()
-            const formatted = data.choices[0].message.content || ''
-            if (formatted.trim().length > 20 && !formatted.includes("Please provide the content")) {
-              finalContent = formatted
+            if (formatterRes.ok) {
+              const data = await formatterRes.json()
+              const formatted = data.choices[0].message.content || ''
+              if (formatted.trim().length > 20 && !formatted.includes("Please provide the content")) {
+                finalContent = formatted
+              }
             }
+          } catch (err: any) {
+            console.error('Formatter failed:', err.message)
           }
-        } catch (err: any) {
-          console.error('Formatter failed:', err.message)
+        } else {
+          logStageAudit(thinkingSteps, {
+            phase: 'PHASE_6_FORMATTER',
+            icon: '✍️',
+            title: 'Phase 6: Content Formatter',
+            status: 'SKIPPED',
+            raw_output: 'Analytical intent detected — bypassing Formatter to preserve Phase 5 response verbatim without template rewriting.'
+          })
         }
       } // End of CAMPAIGN_STRATEGY block
     } else {
