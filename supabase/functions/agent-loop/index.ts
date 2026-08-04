@@ -1382,6 +1382,11 @@ serve(async (req) => {
     let proposals: any[] = []
     let finalContent = ''
 
+    // 3. Get campaign count for stage classification
+    const { count: campaignCount } = await supabaseClient.from('campaigns').select('id', { count: 'exact', head: true }).eq('user_id', user.id)
+    const dimensions = classifyUserIntent(prompt, businessProfile, campaignCount || 0)
+    const knowledgeContext = await retrieveKnowledge(supabaseClient, dimensions)
+
     if (reasoning_mode === 'deep' || true) {
       logStageAudit(thinkingSteps, {
         phase: 'PHASE_0_KNOWLEDGE',
