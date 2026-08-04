@@ -442,7 +442,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                       </button>
 
                       {isThoughtsExpanded && (
-                        <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '650px', overflowY: 'auto', paddingRight: '6px' }}>
                           {msg.thinkingSteps.map((step, idx) => {
                             const isHeader = step.startsWith('🧠') || step.startsWith('📚') || step.startsWith('📊') || step.startsWith('🛡️') || step.startsWith('🔬') || step.startsWith('🎯') || step.startsWith('✍️') || step.startsWith('📋') || step.startsWith('⚡') || step.startsWith('💭') || step.startsWith('[Planning]')
                             const isToolCall = step.startsWith('🛠️')
@@ -461,7 +461,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                                   lineHeight: '1.5'
                                 }}
                               >
-                                <div style={{ fontWeight: isHeader ? 600 : 400, whiteSpace: 'pre-wrap', fontFamily: isToolCall || step.includes('\n\n') ? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' : 'inherit' }}>
+                                <div style={{ fontWeight: isHeader ? 600 : 400, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: isToolCall || step.includes('\n\n') ? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' : 'inherit' }}>
                                   {step}
                                 </div>
                               </div>

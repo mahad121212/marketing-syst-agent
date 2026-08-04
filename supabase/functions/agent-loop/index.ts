@@ -1268,8 +1268,8 @@ serve(async (req) => {
     const openRouterKey = settings.openrouter_key
     const model = settings.preferred_model || 'google/gemini-3.6-flash'
     const isGemini = isGeminiKey(openRouterKey)
-    const maxTokens = isGemini ? 2000 : 800
-    const reviewerMaxTokens = isGemini ? 1000 : 400
+    const maxTokens = 4096
+    const reviewerMaxTokens = 2048
 
     const { error: userMsgErr } = await supabaseClient.from('chat_messages').insert({
       session_id,
@@ -1311,18 +1311,15 @@ serve(async (req) => {
         .eq('user_id', user.id)
 
       const dimensions = classifyUserIntent(prompt, businessProfile, campaignCount || 0)
-      thinkingSteps.push(`📊 Classified: Budget=${dimensions.budget_tier} (${dimensions.extracted_budget ? '$' + dimensions.extracted_budget.usd_equivalent + ' USD equiv.' : 'unknown'}), Market=${dimensions.market_type}, Intent=${dimensions.intent_types.join('+')}, Stage=${dimensions.campaign_stage}`)
-
       const knowledgeContext = await retrieveKnowledge(supabaseClient, dimensions)
       if (knowledgeContext) {
-        thinkingSteps.push(`📚 Retrieved ${knowledgeContext.split('###').length - 1} marketing knowledge frameworks as context.`)
+        thinkingSteps.push(`📚 Phase 0: Classified Dimensions & Retrieved Frameworks:\n- Dimensions: ${JSON.stringify(dimensions, null, 2)}\n\n- Retained Knowledge Context:\n${knowledgeContext}`)
       } else {
-        thinkingSteps.push('📚 No knowledge frameworks matched (proceeding with LLM general knowledge).')
+        thinkingSteps.push(`📚 Phase 0: Classified Dimensions:\n${JSON.stringify(dimensions, null, 2)}\n(No knowledge frameworks matched — proceeding with core knowledge).`)
       }
 
       // Build the enriched Planner input with knowledge context
       const plannerUserMessage = knowledgeContext
-        ? `## MARKETING INTELLIGENCE CONTEXT (Retrieved Frameworks)\nThe following are universal marketing frameworks retrieved based on the user's context. Use these as reference material to inform your strategic blueprint — they are principles, not commands.\n\n${knowledgeContext}\n\n## CLASSIFIED DIMENSIONS\n- Budget Tier: ${dimensions.budget_tier}${dimensions.extracted_budget ? ` (${dimensions.extracted_budget.amount} ${dimensions.extracted_budget.currency} ≈ $${dimensions.extracted_budget.usd_equivalent} USD)` : ''}\n- Market Type: ${dimensions.market_type}\n- User Intent: ${dimensions.intent_types.join(', ')}\n- Campaign Stage: ${dimensions.campaign_stage}\n- Industry: ${dimensions.industry}\n\n## USER REQUEST\n${prompt}`
         : prompt
 
       // ===== PHASE 1: Strategic Planner =====
