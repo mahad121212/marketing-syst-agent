@@ -145,14 +145,13 @@ serve(async (req) => {
     console.log(`Starting Meta sync for user ${userId} and ad account ${adAccountId}...`)
 
     // 1. Fetch campaigns from Meta
-    const filteringParam = encodeURIComponent(JSON.stringify([{ field: 'effective_status', operator: 'IN', value: ['ACTIVE', 'PAUSED'] }]))
-    const campaignsUrl = `https://graph.facebook.com/v21.0/${adAccountId}/campaigns?fields=id,name,status,effective_status,daily_budget,objective,insights{spend,impressions,inline_link_clicks,actions,purchase_roas}&filtering=${filteringParam}&limit=100&access_token=${token}`
+    const campaignsUrl = `https://graph.facebook.com/v21.0/${adAccountId}/campaigns?fields=id,name,status,daily_budget,objective,insights{spend,impressions,inline_link_clicks,actions,purchase_roas}&limit=100&access_token=${token}`
     const campaignsRes = await fetch(campaignsUrl)
     const campaignsData = await campaignsRes.json()
     if (!campaignsRes.ok) throw new Error(`Meta Campaigns API Error: ${campaignsData.error?.message}`)
 
-    const metaCampaigns = (campaignsData.data || []).filter((c: any) => c.effective_status !== 'DELETED' && c.effective_status !== 'ARCHIVED')
-    console.log(`Pulled ${metaCampaigns.length} active/paused campaigns from Meta.`)
+    const metaCampaigns = campaignsData.data || []
+    console.log(`Pulled ${metaCampaigns.length} campaigns from Meta.`)
 
     // 2. Fetch ad sets from Meta
     const adSetsUrl = `https://graph.facebook.com/v21.0/${adAccountId}/adsets?fields=id,campaign_id,name,status,targeting,insights{spend,impressions,inline_link_clicks,actions,purchase_roas}&limit=150&access_token=${token}`
