@@ -442,22 +442,31 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                       </button>
 
                       {isThoughtsExpanded && (
-                        <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                          {msg.thinkingSteps.map((step, idx) => (
-                            <div key={idx} style={{ fontSize: '12px', color: '#9ca3af', display: 'flex', alignItems: 'flex-start', gap: '8px', fontFamily: 'monospace' }}>
-                              <span style={{ color: '#06b6d4' }}>&gt;</span>
-                              <span>{step}</span>
-                            </div>
-                          ))}
+                        <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                          {msg.thinkingSteps.map((step, idx) => {
+                            const isHeader = step.startsWith('🧠') || step.startsWith('📚') || step.startsWith('📊') || step.startsWith('🛡️') || step.startsWith('🔬') || step.startsWith('🎯') || step.startsWith('✍️') || step.startsWith('📋') || step.startsWith('⚡') || step.startsWith('💭') || step.startsWith('[Planning]')
+                            const isToolCall = step.startsWith('🛠️')
 
-                          {/* Tool execution badges if present */}
-                          {msg.toolCalls?.map((tool, tIdx) => (
-                            <div key={tIdx} style={{ fontSize: '11px', backgroundColor: 'rgba(6, 182, 212, 0.1)', border: '1px solid rgba(6, 182, 212, 0.2)', padding: '6px 10px', borderRadius: '6px', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px', color: '#38bdf8' }}>
-                              <Wrench style={{ width: '12px', height: '12px' }} />
-                              <span>Executed Tool: <strong>{tool.name}</strong></span>
-                              <span style={{ marginLeft: 'auto', color: '#10b981', fontWeight: 600 }}>SUCCESS</span>
-                            </div>
-                          ))}
+                            return (
+                              <div
+                                key={idx}
+                                style={{
+                                  backgroundColor: isToolCall ? 'rgba(6, 182, 212, 0.05)' : 'rgba(31, 41, 55, 0.4)',
+                                  border: isToolCall ? '1px solid rgba(6, 182, 212, 0.2)' : '1px solid rgba(255, 255, 255, 0.05)',
+                                  borderRadius: '8px',
+                                  padding: '10px 12px',
+                                  fontSize: '12px',
+                                  color: isHeader ? '#38bdf8' : '#d1d5db',
+                                  fontFamily: 'system-ui, -apple-system, sans-serif',
+                                  lineHeight: '1.5'
+                                }}
+                              >
+                                <div style={{ fontWeight: isHeader ? 600 : 400, whiteSpace: 'pre-wrap', fontFamily: isToolCall || step.includes('\n\n') ? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' : 'inherit' }}>
+                                  {step}
+                                </div>
+                              </div>
+                            )
+                          })}
                         </div>
                       )}
                     </div>

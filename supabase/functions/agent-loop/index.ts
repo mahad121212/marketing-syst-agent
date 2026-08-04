@@ -1375,7 +1375,7 @@ serve(async (req) => {
           }
           
           const intentLabel = isConversational ? 'Conversational' : (isAnalytical ? 'Analytical' : 'Strategic')
-          thinkingSteps.push(`💭 Strategic Planner Thinking (${intentLabel}):\n"${plannerThinking.substring(0, 300)}..."`)
+          thinkingSteps.push(`💭 Strategic Planner Thinking (${intentLabel}):\n\n${plannerThinking}`)
         } catch (err: any) {
           console.error('Planner phase failed, using fallback:', err.message)
           thinkingSteps.push('[Planning] Strategic planner phase encountered an error. Proceeding with fallback plan.')
@@ -1427,9 +1427,10 @@ serve(async (req) => {
             if (planGenRes.ok) {
               const data = await planGenRes.json()
               conversationBrain.pre_execution_plan = data.choices[0].message.content || conversationBrain.planner_thinking
-              thinkingSteps.push('🛡️ Pre-Execution Plan Generator: Strategic blueprint formed successfully.')
+              thinkingSteps.push(`🛡️ Pre-Execution Strategic Blueprint:\n\n${conversationBrain.pre_execution_plan}`)
             } else {
               conversationBrain.pre_execution_plan = conversationBrain.planner_thinking
+              thinkingSteps.push(`🛡️ Pre-Execution Strategic Blueprint (Fallback to Planner Thinking):\n\n${conversationBrain.pre_execution_plan}`)
             }
           } catch (err: any) {
             console.error('Pre-execution plan generator error:', err.message)
@@ -1472,7 +1473,6 @@ serve(async (req) => {
               let toolArgs = {}
               try { toolArgs = JSON.parse(toolCall.function.arguments || '{}') } catch {}
 
-              thinkingSteps.push('🛠️ Research Tool Executed: ' + toolName)
               const toolResult = await executeTool(
                 toolName,
                 toolArgs,
@@ -1484,13 +1484,15 @@ serve(async (req) => {
                 settings?.meta_ad_account_id || undefined
               )
 
+              thinkingSteps.push(`🛠️ Research Tool Executed: ${toolName}\n- Input Arguments: ${JSON.stringify(toolArgs)}\n- Raw Output Payload:\n${toolResult}`)
+              
               try {
                 const parsed = JSON.parse(toolResult)
                 if (parsed.type === 'PROPOSAL' || parsed.type === 'GOAL_PROPOSAL') proposals.push(parsed)
               } catch {}
 
-              toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult.substring(0, 500), status: 'success' })
-              conversationBrain.evidence.push({ tool: toolName, args: toolArgs, result: toolResult.substring(0, 500) })
+              toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult, status: 'success' })
+              conversationBrain.evidence.push({ tool: toolName, args: toolArgs, result: toolResult })
               researchMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResult })
             }
           } else {
@@ -1518,7 +1520,7 @@ serve(async (req) => {
           if (strategyRes.ok) {
             const data = await strategyRes.json()
             conversationBrain.strategy_proposal = data.choices[0].message.content || conversationBrain.pre_execution_plan
-            thinkingSteps.push('🧠 Master Strategy Agent formulated comprehensive strategy proposal.')
+            thinkingSteps.push(`🧠 Master Strategy Proposal (Refined with Research Evidence):\n\n${conversationBrain.strategy_proposal}`)
           }
         } catch (err: any) {
           console.error('Strategy Agent failed:', err.message)
@@ -1564,7 +1566,7 @@ serve(async (req) => {
           const reviews = await Promise.all(reviewerPromises)
           for (const r of reviews) {
             conversationBrain.expert_contributions.push({ expert: r.label, review: r.raw_review })
-            thinkingSteps.push(`${r.label}: "${(r.raw_review || 'Validated.').substring(0, 200)}"`)  
+            thinkingSteps.push(`${r.label}:\n\n${r.raw_review || 'Validated. No concerns.'}`)  
           }
         } else {
           thinkingSteps.push('📊 Analytical intent — skipping Expert Reviewers. Proceeding directly to Response Agent.')
@@ -1609,7 +1611,6 @@ serve(async (req) => {
               const toolName = toolCall.function.name
               let toolArgs = {}
               try { toolArgs = JSON.parse(toolCall.function.arguments || '{}') } catch {}
-              thinkingSteps.push('🛠️ Execution Tool Executed: ' + toolName)
               const toolResult = await executeTool(
                 toolName,
                 toolArgs,
@@ -1620,7 +1621,8 @@ serve(async (req) => {
                 settings?.meta_access_token || undefined,
                 settings?.meta_ad_account_id || undefined
               )
-              toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult.substring(0, 500), status: 'success' })
+              thinkingSteps.push(`🛠️ Execution Tool Executed: ${toolName}\n- Input Arguments: ${JSON.stringify(toolArgs)}\n- Raw Output Payload:\n${toolResult}`)
+              toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult, status: 'success' })
             }
           }
         } 
