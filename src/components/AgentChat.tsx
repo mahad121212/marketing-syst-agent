@@ -439,16 +439,52 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                   {/* Agent Thought / Tool Execution Block */}
                   {isAgent && msg.thinkingSteps && msg.thinkingSteps.length > 0 && (
                     <div style={{ backgroundColor: 'rgba(17, 24, 39, 0.6)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '10px', padding: '12px 16px' }}>
-                      <button
-                        onClick={() => toggleThoughts(msg.id)}
-                        style={{ background: 'none', border: 'none', color: '#9ca3af', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 600, padding: 0 }}
-                      >
-                        {isThoughtsExpanded ? <ChevronDown style={{ width: '14px', height: '14px' }} /> : <ChevronRight style={{ width: '14px', height: '14px' }} />}
-                        <span>Agent Reasoning & Internal OODA Loop ({msg.thinkingSteps.length} steps)</span>
-                      </button>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                        <button
+                          onClick={() => toggleThoughts(msg.id)}
+                          style={{ background: 'none', border: 'none', color: '#9ca3af', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 600, padding: 0 }}
+                        >
+                          {isThoughtsExpanded ? <ChevronDown style={{ width: '14px', height: '14px' }} /> : <ChevronRight style={{ width: '14px', height: '14px' }} />}
+                          <span>Command Center Telemetry Stream ({msg.thinkingSteps.length} stages)</span>
+                        </button>
+                        {isThoughtsExpanded && (
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                              onClick={() => {
+                                const newStates: Record<string, boolean> = {};
+                                msg.thinkingSteps.forEach((s, idx) => {
+                                  try {
+                                    const parsed = typeof s === 'string' ? JSON.parse(s) : s;
+                                    newStates[`${msg.id}_step_${idx}_${parsed.id || idx}`] = true;
+                                  } catch (e) {}
+                                });
+                                setExpandedStageCards(prev => ({ ...prev, ...newStates }));
+                              }}
+                              style={{ background: 'rgba(56, 189, 248, 0.1)', border: '1px solid rgba(56, 189, 248, 0.2)', borderRadius: '4px', color: '#38bdf8', fontSize: '10px', fontWeight: 600, padding: '2px 8px', cursor: 'pointer' }}
+                            >
+                              Expand All
+                            </button>
+                            <button
+                              onClick={() => {
+                                const newStates: Record<string, boolean> = {};
+                                msg.thinkingSteps.forEach((s, idx) => {
+                                  try {
+                                    const parsed = typeof s === 'string' ? JSON.parse(s) : s;
+                                    newStates[`${msg.id}_step_${idx}_${parsed.id || idx}`] = false;
+                                  } catch (e) {}
+                                });
+                                setExpandedStageCards(prev => ({ ...prev, ...newStates }));
+                              }}
+                              style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '4px', color: '#9ca3af', fontSize: '10px', fontWeight: 600, padding: '2px 8px', cursor: 'pointer' }}
+                            >
+                              Collapse All
+                            </button>
+                          </div>
+                        )}
+                      </div>
 
                       {isThoughtsExpanded && (
-                        <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '750px', overflowY: 'auto', paddingRight: '6px' }}>
+                        <div style={{ marginTop: '14px', display: 'flex', flexDirection: 'column', gap: '14px', paddingLeft: '8px', borderLeft: '2px solid rgba(56, 189, 248, 0.2)', marginLeft: '6px' }}>
                           {msg.thinkingSteps.map((step, idx) => {
                             let audit: any = null;
                             try {
@@ -483,13 +519,13 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                             }
 
                             const cardId = `${msg.id}_step_${idx}_${audit.id || idx}`;
-                            const isExpanded = expandedStageCards[cardId] ?? false; // Collapsed by default for a clean, un-cluttered list
+                            const isExpanded = expandedStageCards[cardId] ?? true; // Open by default in timeline view
                             const isTool = audit.phase.includes('TOOL') || !!audit.tool_name;
                             const isSkipped = audit.status === 'SKIPPED';
 
                             // Format raw output: Pretty print if JSON
                             let formattedRawOutput = audit.raw_output || '';
-                            if (typeof formattedRawOutput === 'string' && formattedRawOutput.trim().startsWith('{') || formattedRawOutput.trim().startsWith('[')) {
+                            if (typeof formattedRawOutput === 'string' && (formattedRawOutput.trim().startsWith('{') || formattedRawOutput.trim().startsWith('['))) {
                               try {
                                 formattedRawOutput = JSON.stringify(JSON.parse(formattedRawOutput), null, 2);
                               } catch (e) {}
@@ -499,17 +535,32 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                               <div
                                 key={cardId}
                                 style={{
-                                  backgroundColor: isTool ? 'rgba(6, 182, 212, 0.04)' : 'rgba(17, 24, 39, 0.7)',
+                                  position: 'relative',
+                                  backgroundColor: isTool ? 'rgba(15, 23, 42, 0.85)' : 'rgba(17, 24, 39, 0.75)',
                                   border: isSkipped
                                     ? '1px dashed rgba(156, 163, 175, 0.3)'
                                     : isTool
-                                    ? '1px solid rgba(6, 182, 212, 0.25)'
+                                    ? '1px solid rgba(6, 182, 212, 0.3)'
                                     : '1px solid rgba(255, 255, 255, 0.08)',
                                   borderRadius: '8px',
-                                  overflow: 'hidden',
+                                  marginLeft: '8px',
                                   transition: 'all 0.2s ease'
                                 }}
                               >
+                                {/* Timeline Dot Node */}
+                                <div
+                                  style={{
+                                    position: 'absolute',
+                                    left: '-19px',
+                                    top: '14px',
+                                    width: '10px',
+                                    height: '10px',
+                                    borderRadius: '50%',
+                                    backgroundColor: isTool ? '#38bdf8' : '#818cf8',
+                                    boxShadow: isTool ? '0 0 8px #38bdf8' : '0 0 6px #818cf8'
+                                  }}
+                                />
+
                                 {/* Stage Card Header */}
                                 <button
                                   onClick={() => toggleStageCard(cardId)}
@@ -530,6 +581,11 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                                   <span style={{ fontSize: '12px', fontWeight: 600, color: isTool ? '#38bdf8' : '#f3f4f6', flex: 1 }}>
                                     {audit.title || audit.phase}
                                   </span>
+                                  {isTool && audit.tool_name && (
+                                    <span style={{ fontSize: '10px', fontFamily: 'monospace', backgroundColor: 'rgba(6, 182, 212, 0.15)', border: '1px solid rgba(6, 182, 212, 0.3)', color: '#38bdf8', padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>
+                                      &lt;&gt; Tool Call: {audit.tool_name}  200 OK
+                                    </span>
+                                  )}
                                   <span
                                     style={{
                                       fontSize: '10px',
@@ -545,28 +601,28 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                                   {isExpanded ? <ChevronDown style={{ width: '14px', height: '14px', color: '#9ca3af' }} /> : <ChevronRight style={{ width: '14px', height: '14px', color: '#9ca3af' }} />}
                                 </button>
 
-                                {/* Stage Card Body */}
+                                {/* Stage Card Body — NO MAX HEIGHT CAP! 100% NATURAL SCROLL */}
                                 {isExpanded && (
-                                  <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '12px' }}>
+                                  <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '12px' }}>
                                     {/* Tool Execution Details */}
                                     {audit.tool_name && (
                                       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                        <div style={{ fontSize: '11px', fontWeight: 600, color: '#38bdf8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                                          🛠️ Tool Input Arguments
+                                        <div style={{ fontSize: '10px', fontWeight: 700, color: '#38bdf8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                          🛠️ TOOL INPUT ARGUMENTS
                                         </div>
-                                        <pre style={{ margin: 0, padding: '10px', backgroundColor: 'rgba(0, 0, 0, 0.4)', borderRadius: '6px', color: '#a5f3fc', fontSize: '11px', fontFamily: 'monospace', overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                        <pre style={{ margin: 0, padding: '10px 12px', backgroundColor: 'rgba(0, 0, 0, 0.5)', border: '1px solid rgba(6, 182, 212, 0.2)', borderRadius: '6px', color: '#a5f3fc', fontSize: '11px', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                                           {JSON.stringify(audit.tool_args, null, 2)}
                                         </pre>
                                       </div>
                                     )}
 
-                                    {/* Raw Output / Reasoning */}
+                                    {/* Raw Output / Reasoning — 100% UNTRUNCATED NATURAL HEIGHT */}
                                     {formattedRawOutput && (
                                       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                        <div style={{ fontSize: '11px', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                                          🧠 Raw Stage Output & Reasoning (Untruncated)
+                                        <div style={{ fontSize: '10px', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                          🧠 {isTool ? 'RAW TOOL PAYLOAD / RESPONSE' : 'INTERNAL REASONING & OUTPUT'}
                                         </div>
-                                        <div style={{ padding: '12px', backgroundColor: 'rgba(0, 0, 0, 0.35)', border: '1px solid rgba(255, 255, 255, 0.05)', borderRadius: '6px', color: '#e5e7eb', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace', fontSize: '11px', lineHeight: '1.6', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '400px', overflowY: 'auto' }}>
+                                        <div style={{ padding: '14px 16px', backgroundColor: 'rgba(0, 0, 0, 0.45)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '6px', color: '#f3f4f6', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace', fontSize: '12px', lineHeight: '1.65', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                                           {formattedRawOutput}
                                         </div>
                                       </div>
@@ -576,19 +632,19 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                                     {(audit.system_prompt || audit.user_input) && (
                                       <details style={{ marginTop: '4px', cursor: 'pointer' }}>
                                         <summary style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600, outline: 'none' }}>
-                                          🔍 Inspect Stage System Prompt & Input Context
+                                          🔍 Inspect System Prompt & Context Payload
                                         </summary>
-                                        <div style={{ marginTop: '8px', padding: '10px', backgroundColor: 'rgba(0, 0, 0, 0.5)', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '11px', color: '#9ca3af' }}>
+                                        <div style={{ marginTop: '8px', padding: '12px', backgroundColor: 'rgba(0, 0, 0, 0.6)', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '11px', color: '#9ca3af' }}>
                                           {audit.system_prompt && (
                                             <div>
-                                              <strong style={{ color: '#d1d5db' }}>System Prompt:</strong>
-                                              <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#9ca3af', fontFamily: 'monospace' }}>{audit.system_prompt}</pre>
+                                              <strong style={{ color: '#38bdf8' }}>System Prompt:</strong>
+                                              <pre style={{ margin: '6px 0 0', padding: '8px', backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: '4px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#9ca3af', fontFamily: 'monospace' }}>{audit.system_prompt}</pre>
                                             </div>
                                           )}
                                           {audit.user_input && (
                                             <div>
-                                              <strong style={{ color: '#d1d5db' }}>Input Context:</strong>
-                                              <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#9ca3af', fontFamily: 'monospace' }}>{audit.user_input}</pre>
+                                              <strong style={{ color: '#38bdf8' }}>Input Context Payload:</strong>
+                                              <pre style={{ margin: '6px 0 0', padding: '8px', backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: '4px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#9ca3af', fontFamily: 'monospace' }}>{audit.user_input}</pre>
                                             </div>
                                           )}
                                         </div>
