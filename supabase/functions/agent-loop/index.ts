@@ -1286,6 +1286,9 @@ function isGeminiKey(key: string): boolean {
 
 function getLLMRequestDetails(key: string, requestedModel: string) {
   const k = (key || '').trim();
+  const geminiEnv = (Deno.env.get('GEMINI_API_KEY') || '').trim();
+  const openRouterEnv = (Deno.env.get('OPENROUTER_API_KEY') || '').trim();
+
   if (k && isGeminiKey(k)) {
     let mappedModel = requestedModel.replace('google/', '').trim();
     if (!mappedModel.includes('gemini') && !mappedModel.includes('gemma')) {
@@ -1299,7 +1302,9 @@ function getLLMRequestDetails(key: string, requestedModel: string) {
       },
       model: mappedModel
     }
-  } else if (k) {
+  }
+
+  if (k.length > 5) {
     return {
       url: 'https://openrouter.ai/api/v1/chat/completions',
       headers: {
@@ -1312,25 +1317,22 @@ function getLLMRequestDetails(key: string, requestedModel: string) {
     }
   }
 
-  // Fallback to Deno Env vars
-  const geminiEnv = Deno.env.get('GEMINI_API_KEY');
   if (geminiEnv) {
     return {
       url: `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`,
       headers: {
-        'Authorization': `Bearer ${geminiEnv.trim()}`,
+        'Authorization': `Bearer ${geminiEnv}`,
         'Content-Type': 'application/json'
       },
       model: 'gemini-2.5-flash'
     }
   }
 
-  const openRouterEnv = Deno.env.get('OPENROUTER_API_KEY');
   if (openRouterEnv) {
     return {
       url: 'https://openrouter.ai/api/v1/chat/completions',
       headers: {
-        'Authorization': `Bearer ${openRouterEnv.trim()}`,
+        'Authorization': `Bearer ${openRouterEnv}`,
         'Content-Type': 'application/json',
         'HTTP-Referer': 'https://metaagent.ai',
         'X-Title': 'MetaAgent AI'
@@ -1339,7 +1341,7 @@ function getLLMRequestDetails(key: string, requestedModel: string) {
     }
   }
 
-  throw new Error("No API Key configured. Please enter an OpenRouter or Gemini API Key in Settings.");
+  throw new Error("Missing API Key. Please enter your OpenRouter API Key or Gemini API Key in Settings.");
 }
 
 // ============================================================
