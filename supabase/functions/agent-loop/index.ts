@@ -1264,16 +1264,16 @@ async function executeTool(
 }
 
 function isGeminiKey(key: string): boolean {
-  const k = key.trim()
-  return k.startsWith('AIzaSy') || k.startsWith('AQ.')
+  const k = (key || '').trim();
+  return k.startsWith('AIza') || k.length === 39;
 }
 
 function getLLMRequestDetails(key: string, requestedModel: string) {
-  const k = key.trim()
-  if (isGeminiKey(k)) {
+  const k = (key || '').trim();
+  if (k && isGeminiKey(k)) {
     let mappedModel = requestedModel.replace('google/', '').trim();
     if (!mappedModel.includes('gemini') && !mappedModel.includes('gemma')) {
-      mappedModel = 'gemini-3.6-flash';
+      mappedModel = 'gemini-2.5-flash';
     }
     return {
       url: `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`,
@@ -1283,7 +1283,7 @@ function getLLMRequestDetails(key: string, requestedModel: string) {
       },
       model: mappedModel
     }
-  } else {
+  } else if (k) {
     return {
       url: 'https://openrouter.ai/api/v1/chat/completions',
       headers: {
@@ -1292,9 +1292,38 @@ function getLLMRequestDetails(key: string, requestedModel: string) {
         'HTTP-Referer': 'https://metaagent.ai',
         'X-Title': 'MetaAgent AI'
       },
-      model: requestedModel
+      model: requestedModel || 'anthropic/claude-3.5-sonnet'
     }
   }
+
+  // Fallback to Deno Env vars
+  const geminiEnv = Deno.env.get('GEMINI_API_KEY');
+  if (geminiEnv) {
+    return {
+      url: `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`,
+      headers: {
+        'Authorization': `Bearer ${geminiEnv.trim()}`,
+        'Content-Type': 'application/json'
+      },
+      model: 'gemini-2.5-flash'
+    }
+  }
+
+  const openRouterEnv = Deno.env.get('OPENROUTER_API_KEY');
+  if (openRouterEnv) {
+    return {
+      url: 'https://openrouter.ai/api/v1/chat/completions',
+      headers: {
+        'Authorization': `Bearer ${openRouterEnv.trim()}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://metaagent.ai',
+        'X-Title': 'MetaAgent AI'
+      },
+      model: requestedModel || 'anthropic/claude-3.5-sonnet'
+    }
+  }
+
+  throw new Error("No API Key configured. Please enter an OpenRouter or Gemini API Key in Settings.");
 }
 
 // ============================================================
