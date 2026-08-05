@@ -1735,7 +1735,10 @@ serve(async (req) => {
           `## CRITICAL EXECUTION RULES:\n` +
           `1. PROPORTIONAL RESPONSE: If the user's original request is a data/observation question, LEAD with a clean, plain data presentation of what exists in the account.\n` +
           `2. NO REDUNDANT TOOL CALLS: The Research Agent has already gathered all live account data. Only use creation/action tools if needed.\n` +
-          `3. SYNTHESIZE: Combine research evidence, core strategy, and expert contributions into your final response.`;
+          `3. SYNTHESIZE: Combine research evidence, core strategy, and expert contributions into your final response.\n` +
+          `4. HUMAN PARTNER OPENER & TOOL CONFIRMATION (CRITICAL):\n` +
+          `   - ALWAYS open your final response with a warm, direct 1-sentence confirmation line connecting with the user as their personal Media Buyer (e.g., "I've queued your 24-Hour Watchdog schedule for approval in your Action Center so you can sleep peacefully! Here is your breakdown...").\n` +
+          `   - Never start cold with raw section headers or tables. Acknowledge the user's emotion/need first, confirm any tool action taken, then deliver the breakdown.`;
 
         const responseMessages: any[] = [
           { role: 'system', content: responseWorkerPrompt },
