@@ -36,7 +36,7 @@ const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'propose_action_card',
-      description: 'Proposes an adjustment to a campaign, ad set, or ad. This creates an Action Card in the user\'s Action Center. Use this to DECIDE and ACT. You MUST assign a priority: LOW (minor tweaks), HIGH (budget scaling/pausing losers), MANDATORY (critical failures needing immediate manual review).',
+      description: 'Proposes an adjustment to a campaign, ad set, or ad. This creates an Action Card in the user\'s Action Center. Use this to DECIDE and ACT. IMPORTANT: This tool ONLY creates a pending draft proposal. It does NOT create the campaign on Meta, and you will NOT receive a Meta Campaign ID back. Do NOT try to call create_ad_set immediately after this tool. You MUST assign a priority: LOW, HIGH, or MANDATORY.',
       parameters: {
         type: 'object',
         properties: {
@@ -872,6 +872,11 @@ async function executeTool(
 
     case 'get_state_snapshots': {
       const { target_id } = toolArgs;
+      // Ensure target_id is a UUID. If not, it's likely a Meta ID, so we skip querying the UUID column to prevent crashes.
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(target_id);
+      if (!isUuid) {
+        return JSON.stringify({ note: "No historical state snapshots for this Meta ID." });
+      }
       const { data, error } = await supabaseClient
         .from('metrics_snapshots')
         .select('*')
@@ -889,6 +894,11 @@ async function executeTool(
       const targetId = toolArgs.target_id;
       if (!targetId || targetId === 'NEW' || targetId === 'account' || targetId.trim() === '') {
         return JSON.stringify({ message: "This is a fresh campaign evaluation. No prior decisions exist for this new target." })
+      }
+
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetId);
+      if (!isUuid) {
+        return JSON.stringify({ note: "No previous memory for this Meta ID." });
       }
 
       const { data, error } = await supabaseClient
@@ -1572,7 +1582,7 @@ serve(async (req) => {
               model: reqDetails.model,
               max_tokens: maxTokens,
               messages: researchMessages,
-              tools: AGENT_TOOLS,
+              tools: AGENT_TOOLS.filter(t => ['get_campaign_hierarchy', 'check_agent_memory', 'get_state_snapshots'].includes(t.function.name)),
               tool_choice: 'auto'
             })
           })
