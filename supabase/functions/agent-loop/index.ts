@@ -53,15 +53,15 @@ const AGENT_TOOLS = [
   {
     type: 'function',
     function: {
-      name: 'set_goal_schedule',
-      description: 'Sets a schedule for when you (the Agent) should wake up and re-analyze the account for a specific target. Minimum gap is 4 hours.',
+      name: 'schedule_monitoring_review',
+      description: 'Schedules an operational background review timer for when you (the Agent) should wake up and re-analyze the account or campaign. Minimum gap is 1 minute (0.016 hours).',
       parameters: {
         type: 'object',
         properties: {
-          target_id: { type: 'string', description: 'The UUID of the campaign, ad set, or ad you want to monitor.' },
+          target_id: { type: 'string', description: 'The identifier (UUID, Meta ID, or "account") of the campaign, ad set, or ad you want to monitor.' },
           target_level: { type: 'string', enum: ['campaign', 'ad_set', 'ad', 'account'], description: 'The level of the target.' },
           hours_until_next_review: { type: 'number', description: 'How many hours from now to wake up (minimum 1 minute, use 0.016).' },
-          goal_description: { type: 'string', description: 'What are you monitoring? e.g., "Maintain CPA under $30 for Campaign X".' }
+          goal_description: { type: 'string', description: 'What are you monitoring? e.g., "Review ad performance at 9 AM".' }
         },
         required: ['target_id', 'target_level', 'hours_until_next_review', 'goal_description']
       }
@@ -162,7 +162,7 @@ const AGENT_TOOLS = [
 // ACTION TOOLS FOR STAGE 10 WORKER (Excludes Read-Only Tools)
 // ============================================================
 const ACTION_TOOLS = AGENT_TOOLS.filter(t => 
-  ['create_campaign', 'create_ad_set', 'create_ad', 'propose_action_card', 'set_goal_schedule', 'report_no_action'].includes(t.function.name)
+  ['create_campaign', 'create_ad_set', 'create_ad', 'propose_action_card', 'schedule_monitoring_review', 'set_goal_schedule', 'report_no_action'].includes(t.function.name)
 )
 
 function logStageAudit(
@@ -420,7 +420,7 @@ The following tools exist in the system. You do not call these tools — this li
 - create_ad_set: Creates a new ad set under an existing campaign.
 - create_ad: Creates a new ad under an existing ad set.
 - propose_action_card: Creates an optimization action card for user approval.
-- set_goal_schedule: Schedules automated background monitoring wake-ups.
+- schedule_monitoring_review: Schedules an operational background review timer.
 - report_no_action: Records a formal decision to maintain status quo.
 Note: This tool list is for your thinking context only. Other stages will independently decide which tools to use based on your plan.
 `;
@@ -456,9 +456,9 @@ At the very beginning of your response, you MUST state one of these three prefix
 
 - "CONVERSATIONAL: " — For greetings, thanks, acknowledgments, compliments, or messages where the user is NOT asking to analyze or create anything. Provide a concise reply and stop. EVEN IF there is campaign history, a simple acknowledgment MUST be classified as CONVERSATIONAL.
 
-- "ANALYTICAL: " — For observation/data questions where the user wants to SEE what exists in their account or understand performance (e.g. "analyse my campaigns", "what ads do I have?"). Outline an internal data gathering plan focused on PRESENTING DATA FIRST.
+- "ANALYTICAL: " — For observation/data questions, operational timers/scheduling requests, or quick maintenance (e.g. "schedule a goal for 9am to review ads", "analyse my campaigns", "what ads do I have?"). Focus on DIRECT ACTION and fast execution without generating heavy strategic blueprints.
 
-- "STRATEGIC: " — For requests requiring full strategic deep thinking (e.g. "how should I spend 6500 PKR?", "create a campaign for my sneakers"). Provide your full internal first-principles blueprint narrative.`;
+- "STRATEGIC: " — For requests requiring full strategic deep thinking and brand-new campaign design (e.g. "how should I spend 6500 PKR?", "create a launch campaign for my sneakers"). Provide your full internal first-principles blueprint narrative.`;
 }
 
 function generatePreExecutionPlanGeneratorPrompt(businessProfile: any) {
@@ -954,6 +954,7 @@ async function executeTool(
       })
     }
 
+    case 'schedule_monitoring_review':
     case 'set_goal_schedule': {
       const reviewHours = Math.max(toolArgs.hours_until_next_review || 0.016, 0.016)
       const now = new Date()
