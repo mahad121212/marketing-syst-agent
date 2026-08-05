@@ -872,11 +872,6 @@ async function executeTool(
 
     case 'get_state_snapshots': {
       const { target_id } = toolArgs;
-      // Ensure target_id is a UUID. If not, it's likely a Meta ID, so we skip querying the UUID column to prevent crashes.
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(target_id);
-      if (!isUuid) {
-        return JSON.stringify({ note: "No historical state snapshots for this Meta ID." });
-      }
       const { data, error } = await supabaseClient
         .from('metrics_snapshots')
         .select('*')
@@ -892,13 +887,8 @@ async function executeTool(
 
     case 'check_agent_memory': {
       const targetId = toolArgs.target_id;
-      if (!targetId || targetId === 'NEW' || targetId === 'account' || targetId.trim() === '') {
+      if (!targetId || targetId === 'NEW' || targetId.trim() === '') {
         return JSON.stringify({ message: "This is a fresh campaign evaluation. No prior decisions exist for this new target." })
-      }
-
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetId);
-      if (!isUuid) {
-        return JSON.stringify({ note: "No previous memory for this Meta ID." });
       }
 
       const { data, error } = await supabaseClient
