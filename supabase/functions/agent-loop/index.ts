@@ -202,6 +202,22 @@ const CURRENCY_TO_USD: Record<string, number> = {
   'JPY': 0.0067, 'KRW': 0.00074, 'SGD': 0.74, 'NZD': 0.60
 }
 
+// Approximate CPM in USD by country (for budget feasibility analysis)
+const APPROX_CPM_USD: Record<string, number> = {
+  // Trust-Deficit markets (low CPM)
+  'PK': 0.50, 'IN': 0.60, 'BD': 0.40, 'LK': 0.45, 'NP': 0.35,
+  'PH': 0.70, 'ID': 0.55, 'VN': 0.50, 'NG': 0.80, 'KE': 0.70,
+  'EG': 0.65, 'GH': 0.75, 'TZ': 0.60,
+  // Emerging markets (mid CPM)
+  'AE': 3.50, 'SA': 2.80, 'QA': 3.00, 'KW': 3.20, 'BH': 2.50,
+  'MY': 1.50, 'TH': 1.20, 'ZA': 1.80, 'BR': 2.00, 'MX': 1.50,
+  'TR': 1.00, 'CO': 1.20, 'CL': 1.50,
+  // Mature markets (high CPM)
+  'US': 12.00, 'CA': 10.00, 'UK': 11.00, 'GB': 11.00, 'DE': 9.00,
+  'FR': 8.50, 'AU': 10.00, 'NZ': 8.00, 'JP': 7.00, 'KR': 5.00,
+  'SG': 6.00, 'NL': 9.50, 'SE': 8.00, 'NO': 9.00
+}
+
 // Country code → market trust classification
 const MARKET_TRUST_MAP: Record<string, string> = {
   // TRUST_DEFICIT — High purchase skepticism, social proof critical
@@ -238,100 +254,178 @@ const COUNTRY_NAME_TO_CODE: Record<string, string> = {
   'sweden': 'SE', 'norway': 'NO'
 }
 
-// Intent classification keyword groups
-const INTENT_KEYWORDS: Record<string, string[]> = {
-  'BRAND_BUILDING': ['experience', 'brand', 'awareness', 'trust', 'organic', 'engage', 'story', 'feel', 'community', 'presence', 'recognition', 'loyalty', 'not just sell', 'not sell'],
-  'DIRECT_RESPONSE': ['sales', 'conversions', 'roas', 'profit', 'revenue', 'orders', 'buy', 'purchase', 'checkout', 'sell', 'selling', 'profitable'],
-  'SCALING': ['scale', 'increase', 'grow', 'expand', 'double', 'triple', 'maximize', 'boost', 'amplify'],
-  'TESTING': ['test', 'try', 'experiment', 'new', 'launch', 'first', 'start', 'begin', 'pilot', 'different perspective']
+// Response depth classification (replaces rigid keyword-based intent matching)
+function determineResponseDepth(prompt: string): string {
+  const promptLower = prompt.toLowerCase().trim()
+
+  // Conversational: greetings, thanks, acknowledgments (short messages only)
+  if (/^(hi|hello|hey|thanks|thank you|ok\b|okay|great|sure|got it|cool|awesome|good|nice|perfect|noted|alright|sounds good|lol|haha|yes|yeah|yep|nope|no\b)/i.test(promptLower)) {
+    if (promptLower.length < 60 || !/budget|campaign|spend|ads?|target|scale|launch|create|build|how|what|why/i.test(promptLower)) {
+      return 'CONVERSATIONAL'
+    }
+  }
+
+  // Analytical: observation, data queries, scheduling, monitoring requests
+  if (/\b(schedule|monitor|review at|check on|analyse|analyze|what ads|show me|how are my|status of|report on|audit|inspect|look at|wake.?up|alarm|remind me|watch my)\b/i.test(promptLower)) {
+    return 'ANALYTICAL'
+  }
+
+  // Default: STRATEGIC (may be downgraded to TACTICAL after budget analysis)
+  return 'STRATEGIC'
 }
 
-function classifyUserIntent(prompt: string, businessProfile: any, campaignCount: number) {
+function buildSituationAssessment(prompt: string, businessProfile: any, campaignCount: number) {
   const promptLower = prompt.toLowerCase()
 
-  // 1. Budget Tier Classification
-  // Extract budget amount from prompt using regex
+  // 1. Extract budget from prompt using regex (preserves raw values — no bucketing)
   const budgetPatterns = [
     /(?:pkr|inr|usd|aed|sar|gbp|eur|rs\.?|₹|\$|£|€)\s*([\d,]+(?:\.\d+)?)\s*(?:k|thousand|lac|lakh)?/i,
     /([\d,]+(?:\.\d+)?)\s*(?:k|thousand|lac|lakh)?\s*(?:pkr|inr|usd|aed|sar|gbp|eur|rupees?|dollars?|dirhams?|rs)/i,
     /(?:budget|have|got|spend)\s*(?:is|of|us)?\s*(?:pkr|inr|usd|aed|rs\.?|₹|\$|£|€)?\s*([\d,]+(?:\.\d+)?)\s*(?:k|thousand|lac|lakh)?/i
   ]
 
-  let extractedBudget: any = null
-  let budgetTier = 'GROWTH' // default
+  let statedBudget: number | null = null
+  let budgetCurrency: string | null = null
 
   for (const pattern of budgetPatterns) {
     const match = promptLower.match(pattern)
     if (match) {
       let amount = parseFloat(match[1].replace(/,/g, ''))
-      // Handle multipliers
       if (/k|thousand/i.test(match[0])) amount *= 1000
       if (/lac|lakh/i.test(match[0])) amount *= 100000
-
-      const currency = businessProfile?.currency || 'PKR'
-      const rate = CURRENCY_TO_USD[currency] || 0.01
-      const usdEquivalent = amount * rate
-
-      extractedBudget = { amount, currency, usd_equivalent: Math.round(usdEquivalent) }
-
-      if (usdEquivalent < 100) budgetTier = 'MICRO'
-      else if (usdEquivalent < 1000) budgetTier = 'GROWTH'
-      else budgetTier = 'SCALE'
+      statedBudget = amount
+      // Detect currency from the matched text
+      const currMatch = match[0].match(/pkr|inr|usd|aed|sar|gbp|eur|rs\.?|₹|\$|£|€|rupees?|dollars?|dirhams?/i)
+      if (currMatch) {
+        const cm = currMatch[0].toLowerCase()
+        if (cm.startsWith('pkr') || cm.startsWith('rs') || cm === '₹' || cm.startsWith('rupee')) budgetCurrency = 'PKR'
+        else if (cm.startsWith('inr')) budgetCurrency = 'INR'
+        else if (cm.startsWith('usd') || cm === '$' || cm.startsWith('dollar')) budgetCurrency = 'USD'
+        else if (cm.startsWith('aed') || cm.startsWith('dirham')) budgetCurrency = 'AED'
+        else if (cm.startsWith('sar')) budgetCurrency = 'SAR'
+        else if (cm.startsWith('gbp') || cm === '£') budgetCurrency = 'GBP'
+        else if (cm.startsWith('eur') || cm === '€') budgetCurrency = 'EUR'
+      }
       break
     }
   }
 
-  // Fallback to business profile budget if not found in prompt
-  if (!extractedBudget && businessProfile?.monthly_ad_budget) {
-    const currency = businessProfile.currency || 'PKR'
-    const rate = CURRENCY_TO_USD[currency] || 0.01
-    const usdEquivalent = businessProfile.monthly_ad_budget * rate
-    extractedBudget = { amount: businessProfile.monthly_ad_budget, currency, usd_equivalent: Math.round(usdEquivalent) }
-    if (usdEquivalent < 100) budgetTier = 'MICRO'
-    else if (usdEquivalent < 1000) budgetTier = 'GROWTH'
-    else budgetTier = 'SCALE'
+  const currency = budgetCurrency || businessProfile?.currency || 'PKR'
+  const rate = CURRENCY_TO_USD[currency] || 0.01
+
+  let usdEquivalent: number | null = null
+  if (statedBudget !== null) {
+    usdEquivalent = Math.round(statedBudget * rate * 100) / 100
+  } else if (businessProfile?.monthly_ad_budget) {
+    statedBudget = businessProfile.monthly_ad_budget
+    usdEquivalent = Math.round(statedBudget * rate * 100) / 100
   }
 
-  // 2. Market Trust Classification
+  // 2. Extract time horizon from prompt
+  let timeHorizonDays: number | null = null
+  const timeMatch = promptLower.match(/(\d+)\s*(?:-?\s*)?day/i)
+  if (timeMatch) timeHorizonDays = parseInt(timeMatch[1])
+  const weekMatch = promptLower.match(/(\d+)\s*(?:-?\s*)?week/i)
+  if (!timeHorizonDays && weekMatch) timeHorizonDays = parseInt(weekMatch[1]) * 7
+  const monthMatch = promptLower.match(/(\d+)\s*(?:-?\s*)?month/i)
+  if (!timeHorizonDays && monthMatch) timeHorizonDays = parseInt(monthMatch[1]) * 30
+
+  // 3. Country and market classification
   let countryRaw = (businessProfile?.country || 'Pakistan').trim()
   let countryCode = countryRaw.length <= 3
     ? countryRaw.toUpperCase().substring(0, 2)
     : (COUNTRY_NAME_TO_CODE[countryRaw.toLowerCase()] || 'PK')
-  const marketType = MARKET_TRUST_MAP[countryCode] || 'EMERGING'
+  const marketTrustLevel = MARKET_TRUST_MAP[countryCode] || 'EMERGING'
 
-  // 3. Intent Classification (keyword matching)
-  const intentTypes: string[] = []
-  for (const [intent, keywords] of Object.entries(INTENT_KEYWORDS)) {
-    if (keywords.some(kw => promptLower.includes(kw))) {
-      intentTypes.push(intent)
+  // 4. Industry and pixel maturity
+  const industry = (businessProfile?.industry || 'general').toLowerCase()
+  const pixelMaturity = campaignCount > 0 ? 'ESTABLISHED' : 'COLD_START'
+
+  // 5. Derive marketing reality from raw facts
+  const estimatedCPM = APPROX_CPM_USD[countryCode] || 2.00
+  let dailyBudgetUSD: number | null = null
+  if (usdEquivalent !== null) {
+    if (timeHorizonDays && timeHorizonDays > 0) {
+      dailyBudgetUSD = Math.round((usdEquivalent / timeHorizonDays) * 100) / 100
+    } else if (/per\s*day|daily|\/day/i.test(promptLower)) {
+      dailyBudgetUSD = usdEquivalent
+    } else {
+      // Assume total budget over 7-day default horizon
+      dailyBudgetUSD = Math.round((usdEquivalent / 7) * 100) / 100
+      if (!timeHorizonDays) timeHorizonDays = 7
     }
   }
-  if (intentTypes.length === 0) intentTypes.push('DIRECT_RESPONSE')
 
-  // 4. Industry from business profile
-  const industry = (businessProfile?.industry || 'general').toLowerCase()
+  let estimatedDailyImpressions: number | null = null
+  let estimatedWeeklyConversions: number | null = null
+  let canExitLearningPhase: boolean | null = null
+  let maxAdSetsSupportable: number | null = null
+  let budgetReality = ''
 
-  // 5. Campaign Stage
-  let campaignStage = 'COLD_START'
-  if (campaignCount > 0) campaignStage = 'ESTABLISHED'
+  if (dailyBudgetUSD !== null) {
+    estimatedDailyImpressions = Math.round((dailyBudgetUSD / estimatedCPM) * 1000)
+    // Conservative: ~1% CTR, ~2% landing-to-conversion rate
+    const estDailyClicks = estimatedDailyImpressions * 0.01
+    const estDailyConversions = estDailyClicks * 0.02
+    estimatedWeeklyConversions = Math.round(estDailyConversions * 7 * 10) / 10
+    canExitLearningPhase = estimatedWeeklyConversions >= 50
+    maxAdSetsSupportable = Math.max(1, Math.floor(dailyBudgetUSD / 3))
+
+    if (dailyBudgetUSD < 5) {
+      budgetReality = `Ultra-micro budget (~$${dailyBudgetUSD}/day). Cannot sustain multiple ad sets. Must consolidate into 1 campaign > 1 ad set > 1-2 ads with broad targeting to maximize signal density.`
+    } else if (dailyBudgetUSD < 15) {
+      budgetReality = `Micro-test budget (~$${dailyBudgetUSD}/day). Supports ${maxAdSetsSupportable} ad set(s) maximum. Focus on single variable testing. Unlikely to exit Meta learning phase.`
+    } else if (dailyBudgetUSD < 50) {
+      budgetReality = `Growth-test budget (~$${dailyBudgetUSD}/day). Can support ${maxAdSetsSupportable} ad sets for structured A/B testing. May exit learning phase with upper-funnel optimization.`
+    } else {
+      budgetReality = `Scaling-ready budget (~$${dailyBudgetUSD}/day). Can support multi-ad-set testing and CBO optimization. Sufficient volume for learning phase exit on purchase events.`
+    }
+  }
+
+  let breakevenRoas: number | null = null
+  if (businessProfile?.target_roas) {
+    breakevenRoas = businessProfile.target_roas
+  }
+
+  // 6. Determine pipeline depth (may downgrade STRATEGIC → TACTICAL for constrained budgets)
+  let responseDepth = determineResponseDepth(prompt)
+  if (responseDepth === 'STRATEGIC' && dailyBudgetUSD !== null && dailyBudgetUSD < 20) {
+    if (/\b(what.*structure|how.*split|how.*allocate|campaign.*setup|daily.*spend|budget.*split|how.*divide|what.*setup)\b/i.test(promptLower)) {
+      responseDepth = 'TACTICAL'
+    }
+  }
 
   return {
-    budget_tier: budgetTier,
-    market_type: marketType,
-    intent_types: intentTypes,
-    industry,
-    campaign_stage: campaignStage,
-    extracted_budget: extractedBudget
+    extracted_facts: {
+      stated_budget: statedBudget,
+      currency: currency,
+      usd_equivalent: usdEquivalent,
+      time_horizon_days: timeHorizonDays,
+      daily_budget_usd: dailyBudgetUSD,
+      target_market_country: countryCode,
+      market_trust_level: marketTrustLevel,
+      industry: industry,
+      campaign_count: campaignCount,
+      pixel_maturity: pixelMaturity
+    },
+    derived_reality: {
+      estimated_local_cpm_usd: estimatedCPM,
+      estimated_daily_impressions: estimatedDailyImpressions,
+      estimated_weekly_conversions: estimatedWeeklyConversions,
+      can_exit_learning_phase: canExitLearningPhase,
+      max_ad_sets_supportable: maxAdSetsSupportable,
+      budget_reality: budgetReality,
+      breakeven_roas: breakevenRoas
+    },
+    pipeline_config: {
+      response_depth: responseDepth
+    }
   }
 }
 
-function isPurelyConversationalPrompt(_prompt: string): boolean {
-  // Intent classification is now handled entirely by the LLM Planner (Stage 1).
-  // No hardcoded wordlists. The billion-parameter model decides naturally.
-  return false;
-}
+// isPurelyConversationalPrompt removed — response depth is now determined by buildSituationAssessment()
 
-async function retrieveKnowledge(supabaseClient: any, dimensions: any): Promise<string> {
+async function retrieveKnowledge(supabaseClient: any, assessment: any): Promise<string> {
   try {
     const { data: allKnowledge, error } = await supabaseClient
       .from('marketing_knowledge')
@@ -343,27 +437,42 @@ async function retrieveKnowledge(supabaseClient: any, dimensions: any): Promise<
       return ''
     }
 
-    // Score each document by dimension overlap
+    const facts = assessment.extracted_facts
+    const reality = assessment.derived_reality
+
+    // Score each document by situational relevance (uses Situation Assessment, not flat buckets)
     const scored = allKnowledge.map((doc: any) => {
       let score = 0
       const dims = doc.dimensions || {}
 
-      // Budget tier match (weight: 2)
-      if (dims.budget_tiers?.includes(dimensions.budget_tier) || dims.budget_tiers?.includes('ALL')) score += 2
+      // Budget relevance (weight: 3 — strongest signal, uses USD equivalent ranges instead of rigid tiers)
+      if (dims.budget_tiers) {
+        const usd = facts.usd_equivalent || 0
+        if (usd < 200 && (dims.budget_tiers.includes('MICRO') || dims.budget_tiers.includes('ALL'))) score += 3
+        else if (usd >= 200 && usd < 2000 && (dims.budget_tiers.includes('GROWTH') || dims.budget_tiers.includes('ALL'))) score += 3
+        else if (usd >= 2000 && (dims.budget_tiers.includes('SCALE') || dims.budget_tiers.includes('ALL'))) score += 3
+        else if (dims.budget_tiers.includes('ALL')) score += 2
+      }
 
       // Market type match (weight: 2)
-      if (dims.market_types?.includes(dimensions.market_type) || dims.market_types?.includes('ALL')) score += 2
+      if (dims.market_types?.includes(facts.market_trust_level) || dims.market_types?.includes('ALL')) score += 2
 
-      // Intent match (weight: 3 — strongest signal)
-      for (const intent of dimensions.intent_types) {
-        if (dims.intent_types?.includes(intent) || dims.intent_types?.includes('ALL')) { score += 3; break }
+      // Situational boost based on derived reality (weight: 2)
+      if (reality.can_exit_learning_phase === false) {
+        const titleAndContent = ((doc.title || '') + ' ' + (doc.content || '').substring(0, 500)).toLowerCase()
+        if (/learning phase|consolidat|signal|micro.?budget|pacing/i.test(titleAndContent)) score += 2
+      }
+      if (reality.max_ad_sets_supportable !== null && reality.max_ad_sets_supportable <= 1) {
+        const title = (doc.title || '').toLowerCase()
+        if (/abo|single/i.test(title)) score += 1
+        if (/cbo|campaign.?budget/i.test(title)) score -= 1
       }
 
       // Campaign stage match (weight: 1)
-      if (dims.campaign_stages?.includes(dimensions.campaign_stage) || dims.campaign_stages?.includes('ALL')) score += 1
+      if (dims.campaign_stages?.includes(facts.pixel_maturity) || dims.campaign_stages?.includes('ALL')) score += 1
 
       // Industry match (weight: 1)
-      if (dims.industries?.includes(dimensions.industry) || dims.industries?.includes('ALL')) score += 1
+      if (dims.industries?.includes(facts.industry) || dims.industries?.includes('ALL')) score += 1
 
       // Priority boost (0-1 range)
       score += (doc.priority || 5) / 10
@@ -425,7 +534,7 @@ The following tools exist in the system. You do not call these tools — this li
 Note: This tool list is for your thinking context only. Other stages will independently decide which tools to use based on your plan.
 `;
 
-  return `You are the internal Strategic Planner engine (Phase 1). Your job is to think deeply, reason from first principles, and establish an internal strategic roadmap for the downstream specialist agents in this pipeline (Phase 2 Research Agent, Phase 3 Master Strategy, Phase 10 Execution Worker, Phase 11 Formatter).
+  return `You are the internal Strategic Planner engine (Phase 1). Your job is to think deeply, reason from first principles, and establish an internal strategic roadmap for the downstream specialist agents.
 
 ${profileContext}
 
@@ -433,32 +542,53 @@ ${toolContext}
 
 ## CRITICAL VOICE & ROLE DIRECTIVES (INTERNAL SUBSYSTEM ROLE):
 1. INTERNAL ROLE ONLY: You are an internal thinking engine. You are NOT talking to the human user. 
-2. NO USER-FACING QUESTIONS: DO NOT address the human user directly. DO NOT ask the user questions (e.g. "Would you like me to draft ad copy?"). DO NOT offer next steps to the user.
+2. NO USER-FACING QUESTIONS: DO NOT address the human user directly. DO NOT ask the user questions. DO NOT offer next steps to the user.
 3. SELF-AWARE PIPELINE REASONING: Frame your thought process internally:
    - "Strategic Direction:"
    - "Target Architecture:"
    - "Downstream Research Directives for Phase 2:"
    - "Internal Validation Criteria for Phase 3:"
-   - Evaluate your own internal readiness: "Have I provided enough clarity and strategic rigor for Phase 2 (Research Agent) and Phase 3 (Master Strategy) to proceed?"
+
+## SITUATION ASSESSMENT INTELLIGENCE (CRITICAL — READ THIS FIRST)
+You will receive a SITUATION ASSESSMENT generated by Phase 0. This assessment contains:
+- **extracted_facts**: Raw data from the user's message (budget, currency, time horizon, market, etc.)
+- **derived_reality**: Marketing-meaningful metrics (estimated CPM, daily impressions, weekly conversions, learning phase feasibility, max supportable ad sets, budget reality)
+- **pipeline_config**: The response depth determined for this request
+
+YOU MUST USE the derived_reality to ground your strategic thinking. Do NOT contradict the Situation Assessment's mathematical analysis. If derived_reality says can_exit_learning_phase is false, you MUST design a consolidated structure. If max_ad_sets_supportable is 1, you MUST NOT recommend multi-ad-set testing.
+
+## MARKETING FIRST PRINCIPLES (Apply Based on Situation Assessment)
+These are universal laws. Apply them dynamically based on the Situation Assessment:
+
+1. **THE SIGNAL DENSITY LAW**: Meta's algorithm needs ~50 conversion events/week to exit learning phase.
+   - IF can_exit_learning_phase === false → Consolidate ALL spend into 1 campaign, 1 ad set. Broad targeting. Consider optimizing for upper-funnel events (Landing Page Views, Add to Cart) instead of Purchase.
+   - IF can_exit_learning_phase === true → Standard multi-ad-set testing is viable.
+
+2. **THE CONSOLIDATION IMPERATIVE**: Budget must be concentrated, not spread thin.
+   - Use max_ad_sets_supportable to determine structure complexity. NEVER recommend more ad sets than the budget can support at $3-5/day minimum each.
+   - For micro-budgets: 1 Campaign → 1 Ad Set → 1-2 Ads. Period.
+
+3. **THE TRUST GRADIENT LAW**: In TRUST_DEFICIT markets, conversion friction is trust, not price.
+   - IF market_trust_level === 'TRUST_DEFICIT' → Prioritize COD (Cash on Delivery), WhatsApp buttons, UGC-style creatives, open-parcel delivery videos, customer testimonials.
+   - IF market_trust_level === 'MATURE' → Prioritize value proposition, competitive differentiation, retargeting funnels.
+
+4. **THE BREAKEVEN GATE**: Never recommend scaling without establishing profitability.
+   - IF business profile has AOV and margins → Calculate Breakeven ROAS = 1/margin.
+   - IF current ROAS < Breakeven ROAS → Do NOT scale. Optimize first.
+
+5. **THE CREATIVE LEVERAGE LAW**: When budget is constrained, creative quality is the only competitive advantage.
+   - IF daily_budget_usd < $10 → Recommend 1-2 high-quality creatives, NOT A/B testing multiple variants (insufficient traffic for statistical significance).
+
+6. **THE PROPORTIONAL RESPONSE LAW**: Match output depth to the complexity of the ask.
+   - A "what structure should I use?" question needs a tactical answer, NOT a 2000-word strategic manifesto.
 
 ## Holistic First-Principles Reasoning Rules:
-1. HOLISTIC EVALUATION: Do NOT rely on rigid formulas or hardcoded rules. Synthesize target country CPM economics, margin/AOV, business model, and user resources.
-2. CURRENCY INTEGRITY: Preserve the user's native currency (${businessProfile?.currency || 'PKR'}) at all times.
+1. HOLISTIC EVALUATION: Synthesize target country CPM economics, margin/AOV, business model, and user resources. Never rely on rigid formulas.
+2. CURRENCY INTEGRITY: Preserve the user's native currency (${businessProfile?.currency || 'PKR'}) at all times. Use USD only for internal calculations.
 3. TIMELINE & PACING GUARDRAILS:
-   - **Direct User Constraint**: If the user explicitly asks to run a campaign for a specific duration (e.g. "run for 2 days"), match your internal strategy to this timeline.
-   - **Open-Ended Strategy**: Reason from first principles. Propose a robust budget test pacing plan (recommend 4+ days for Meta's machine learning).
-4. UNIFIED THINKING:
-   - Think through detailed strategic direction covering budget pacing logic, creative hook themes, average order value leverage, and post-launch decision trees.
-   - Your internal blueprint will be consumed by downstream agents. Provide clear, objective strategic direction.
-
-## Intent Awareness (USE YOUR NATURAL INTELLIGENCE — NO WORDLISTS)
-At the very beginning of your response, you MUST state one of these three prefixes:
-
-- "CONVERSATIONAL: " — For greetings, thanks, acknowledgments, compliments, or messages where the user is NOT asking to analyze or create anything. Provide a concise reply and stop. EVEN IF there is campaign history, a simple acknowledgment MUST be classified as CONVERSATIONAL.
-
-- "ANALYTICAL: " — For observation/data questions, operational timers/scheduling requests, or quick maintenance (e.g. "schedule a goal for 9am to review ads", "analyse my campaigns", "what ads do I have?"). Focus on DIRECT ACTION and fast execution without generating heavy strategic blueprints.
-
-- "STRATEGIC: " — For requests requiring full strategic deep thinking and brand-new campaign design (e.g. "how should I spend 6500 PKR?", "create a launch campaign for my sneakers"). Provide your full internal first-principles blueprint narrative.`;
+   - **Direct User Constraint**: If the user explicitly asks to run a campaign for a specific duration, match your strategy to this timeline.
+   - **Open-Ended Strategy**: Reason from first principles. Propose a robust budget pacing plan (recommend 4+ days minimum for Meta's machine learning).
+4. UNIFIED THINKING: Your internal blueprint will be consumed by downstream agents. Provide clear, objective strategic direction covering budget pacing, campaign structure, creative direction, and post-launch decision trees.`;
 }
 
 function generatePreExecutionPlanGeneratorPrompt(businessProfile: any) {
@@ -1383,37 +1513,38 @@ serve(async (req) => {
     let proposals: any[] = []
     let finalContent = ''
 
-    // 3. Get campaign count for stage classification
+    // 3. Get campaign count for situation assessment
     const { count: campaignCount } = await supabaseClient.from('campaigns').select('id', { count: 'exact', head: true }).eq('user_id', user.id)
-    const dimensions = classifyUserIntent(prompt, businessProfile, campaignCount || 0)
-    const knowledgeContext = await retrieveKnowledge(supabaseClient, dimensions)
+    const situationAssessment = buildSituationAssessment(prompt, businessProfile, campaignCount || 0)
+    const knowledgeContext = await retrieveKnowledge(supabaseClient, situationAssessment)
 
     if (reasoning_mode === 'deep' || true) {
       logStageAudit(thinkingSteps, {
         phase: 'PHASE_0_KNOWLEDGE',
         icon: '📚',
-        title: 'Phase 0: Intent Classification & Knowledge Intelligence',
+        title: 'Phase 0: Situation Assessment & Knowledge Intelligence',
         user_input: prompt,
-        raw_output: `Classified Dimensions:\n${JSON.stringify(dimensions, null, 2)}\n\nRetrieved Marketing Knowledge Context:\n${knowledgeContext || 'No frameworks matched — proceeding with LLM general knowledge.'}`
+        raw_output: `Situation Assessment:\n${JSON.stringify(situationAssessment, null, 2)}\n\nRetrieved Marketing Knowledge Context:\n${knowledgeContext || 'No frameworks matched — proceeding with LLM general knowledge.'}`
       })
 
       const plannerUserMessage = knowledgeContext
-        ? `## MARKETING INTELLIGENCE CONTEXT (Retrieved Frameworks)\nThe following are universal marketing frameworks retrieved based on the user's context. Use these as reference material to inform your strategic blueprint — they are principles, not commands.\n\n${knowledgeContext}\n\n## CLASSIFIED DIMENSIONS\n- Budget Tier: ${dimensions.budget_tier}${dimensions.extracted_budget ? ` (${dimensions.extracted_budget.amount} ${dimensions.extracted_budget.currency} ≈ $${dimensions.extracted_budget.usd_equivalent} USD)` : ''}\n- Market Type: ${dimensions.market_type}\n- User Intent: ${dimensions.intent_types.join(', ')}\n- Campaign Stage: ${dimensions.campaign_stage}\n- Industry: ${dimensions.industry}\n\n## USER REQUEST\n${prompt}`
-        : prompt
+        ? `## SITUATION ASSESSMENT\n${JSON.stringify(situationAssessment, null, 2)}\n\n## MARKETING INTELLIGENCE CONTEXT (Retrieved Frameworks)\nThe following are universal marketing frameworks retrieved based on the user's situation. Use these as reference material to inform your strategic blueprint — they are principles, not commands.\n\n${knowledgeContext}\n\n## USER REQUEST\n${prompt}`
+        : `## SITUATION ASSESSMENT\n${JSON.stringify(situationAssessment, null, 2)}\n\n## USER REQUEST\n${prompt}`
 
       let planJson: any = null
+      const responseDepth = situationAssessment.pipeline_config.response_depth
 
-      if (isPurelyConversationalPrompt(prompt)) {
+      if (responseDepth === 'CONVERSATIONAL') {
         logStageAudit(thinkingSteps, {
           phase: 'PHASE_1_PLANNER',
           icon: '💬',
           title: 'Phase 1: Strategic Planner (Conversational)',
           status: 'COMPLETED',
-          raw_output: 'CONVERSATIONAL: Pure conversational acknowledgment detected.'
+          raw_output: 'CONVERSATIONAL: Conversational acknowledgment detected by Situation Assessment.'
         })
         planJson = {
           intent: 'CONVERSATION',
-          raw_thinking: 'CONVERSATIONAL: Pure conversational acknowledgment detected.',
+          raw_thinking: 'CONVERSATIONAL: Conversational acknowledgment detected.',
           conversational_response: "You're very welcome! I'm here whenever you're ready to review campaign options, optimize performance, or take next steps.",
           currency: businessProfile?.currency || 'PKR'
         }
@@ -1437,27 +1568,19 @@ serve(async (req) => {
           if (!plannerRes.ok) throw new Error(await plannerRes.text())
           const plannerData = await plannerRes.json()
           const rawContent = plannerData.choices[0].message.content || ''
-          
           const plannerThinking = rawContent.trim()
-          const isConversational = plannerThinking.toUpperCase().startsWith('CONVERSATIONAL:')
-          const isAnalytical = plannerThinking.toUpperCase().startsWith('ANALYTICAL:')
-          
-          let detectedIntent = 'CAMPAIGN_STRATEGY'
-          if (isConversational) detectedIntent = 'CONVERSATION'
-          else if (isAnalytical) detectedIntent = 'ANALYTICAL'
 
           planJson = {
-            intent: detectedIntent,
+            intent: responseDepth,
             raw_thinking: plannerThinking,
-            conversational_response: isConversational ? plannerThinking.replace(/^CONVERSATIONAL:\s*/i, '') : '',
+            conversational_response: '',
             currency: businessProfile?.currency || 'PKR'
           }
-          
-          const intentLabel = isConversational ? 'Conversational' : (isAnalytical ? 'Analytical' : 'Strategic')
+
           logStageAudit(thinkingSteps, {
             phase: 'PHASE_1_PLANNER',
             icon: '💭',
-            title: `Phase 1: Strategic Planner Reasoning (${intentLabel})`,
+            title: `Phase 1: Strategic Planner Reasoning (${responseDepth})`,
             system_prompt: plannerSystemPrompt,
             user_input: plannerUserMessage,
             raw_output: plannerThinking
@@ -1468,11 +1591,11 @@ serve(async (req) => {
             phase: 'PHASE_1_PLANNER',
             icon: '💭',
             title: 'Phase 1: Strategic Planner Reasoning (Fallback)',
-            raw_output: 'STRATEGIC: Standard growth strategy analysis. Campaign (Sales), Ad Sets, Ad Creatives matched to user budget scale.'
+            raw_output: `STRATEGIC: Standard growth strategy analysis (${responseDepth}).`
           })
           planJson = {
-            intent: 'CAMPAIGN_STRATEGY',
-            raw_thinking: 'STRATEGIC: Standard growth strategy analysis. Campaign (Sales), Ad Sets, Ad Creatives matched to user budget scale.',
+            intent: responseDepth,
+            raw_thinking: `STRATEGIC: Standard growth strategy analysis (${responseDepth}).`,
             conversational_response: '',
             currency: businessProfile?.currency || 'PKR'
           }
@@ -1492,7 +1615,7 @@ serve(async (req) => {
         // Shared Working Memory (Blackboard State)
         const conversationBrain: any = {
           goal: prompt,
-          classified_dimensions: dimensions,
+          situation_assessment: situationAssessment,
           currency: planJson.currency || businessProfile?.currency || 'PKR',
           planner_thinking: planJson.raw_thinking,
           pre_execution_plan: '',
@@ -1502,10 +1625,11 @@ serve(async (req) => {
           expert_contributions: []
         }
 
-        const isAnalyticalIntent = planJson.intent === 'ANALYTICAL'
+        const skipPreExecutionPlan = responseDepth === 'ANALYTICAL' || responseDepth === 'TACTICAL'
+        const skipReviewers = responseDepth === 'ANALYTICAL' || responseDepth === 'TACTICAL'
 
-        // ===== PHASE 1.5: Pre-Execution Plan Generator (SKIP for ANALYTICAL intent) =====
-        if (!isAnalyticalIntent) {
+        // ===== PHASE 1.5: Pre-Execution Plan Generator (SKIP for ANALYTICAL/TACTICAL intent) =====
+        if (!skipPreExecutionPlan) {
           const planGenSystemPrompt = generatePreExecutionPlanGeneratorPrompt(businessProfile)
           const planGenInput = `## Planner's Deep Thinking\nThe Strategic Planner analyzed the user's request and produced the following first-principles thinking:\n\n${conversationBrain.planner_thinking}\n\n## User's Original Prompt\nThis was the user's original request on which the Planner generated the above thinking:\n\n${prompt}`
           try {
@@ -1552,7 +1676,7 @@ serve(async (req) => {
             icon: '📊',
             title: 'Phase 1.5: Pre-Execution Strategic Blueprint',
             status: 'SKIPPED',
-            raw_output: 'Analytical intent detected — skipping Pre-Execution Plan to gather live ad account metrics directly.'
+            raw_output: `${responseDepth} intent detected — skipping Pre-Execution Plan to fast-track execution.`
           })
           conversationBrain.pre_execution_plan = conversationBrain.planner_thinking
         }
@@ -1668,7 +1792,7 @@ serve(async (req) => {
         }
 
         // ===== PHASE 4: Board of Constructive Expert Debaters =====
-        if (!isAnalyticalIntent) {
+        if (!skipReviewers) {
           const reviewerConfigs = [
             { id: 'strategy', label: '🎯 CSO Strategy Expert', promptFn: generateStrategyReviewerPrompt },
             { id: 'copy', label: '✍️ Lead Copywriting Expert', promptFn: generateCopyReviewerPrompt },
@@ -1722,7 +1846,7 @@ serve(async (req) => {
             icon: '📋',
             title: 'Phase 4: Board of Expert Reviewers',
             status: 'SKIPPED',
-            raw_output: 'Analytical intent — skipping Expert Reviewers. Proceeding directly to Response Agent.'
+            raw_output: `${responseDepth} intent — skipping Expert Reviewers. Proceeding directly to Response Agent.`
           })
         }
 
@@ -1811,7 +1935,7 @@ serve(async (req) => {
         }
 
         // ===== PHASE 6: Formatter =====
-        if (!isAnalyticalIntent) {
+        if (responseDepth !== 'ANALYTICAL') {
           thinkingSteps.push('✍️ Formatting finalized ad strategy layout...')
           try {
             const reqDetails = getLLMRequestDetails(openRouterKey, model)
