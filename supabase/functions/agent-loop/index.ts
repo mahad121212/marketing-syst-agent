@@ -259,11 +259,15 @@ function determineResponseDepth(prompt: string): string {
   const promptLower = prompt.toLowerCase().trim()
 
   // Conversational: greetings, thanks, acknowledgments (short messages only)
-  if (/^(hi|hello|hey|thanks|thank you|ok\b|okay|great|sure|got it|cool|awesome|good|nice|perfect|noted|alright|sounds good|lol|haha|yes|yeah|yep|nope|no\b)/i.test(promptLower)) {
+  // DEPRECATED: We no longer hardcode CONVERSATIONAL routing here because it overrides the LLM.
+  // The LLM (Stage 1) is smart enough to output 'CONVERSATIONAL:' on its own when appropriate.
+  /*
+  if (/^(hi|hello|hey|thanks|thank you|ok\\b|okay|great|sure|got it|cool|awesome|good|nice|perfect|noted|alright|sounds good|lol|haha|yes|yeah|yep|nope|no\\b)/i.test(promptLower)) {
     if (promptLower.length < 60 || !/budget|campaign|spend|ads?|target|scale|launch|create|build|how|what|why/i.test(promptLower)) {
       return 'CONVERSATIONAL'
     }
   }
+  */
 
   // Analytical: observation, data queries, scheduling, monitoring requests
   if (/\b(schedule|monitor|review at|check on|analyse|analyze|what ads|show me|how are my|status of|report on|audit|inspect|look at|wake.?up|alarm|remind me|watch my)\b/i.test(promptLower)) {
