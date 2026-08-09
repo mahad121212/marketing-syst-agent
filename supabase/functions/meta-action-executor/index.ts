@@ -17,18 +17,15 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    // Authenticate the user
     const authHeader = req.headers.get('Authorization')
     if (!authHeader) throw new Error('No authorization header')
     
     const { data: { user }, error: userError } = await supabaseClient.auth.getUser(authHeader.replace('Bearer ', ''))
     if (userError || !user) throw new Error('Unauthorized')
 
-    // Parse the Action Card ID
     const { action_card_id } = await req.json()
     if (!action_card_id) throw new Error('action_card_id is required')
 
-    // Fetch the Action Card
     const { data: card, error: cardError } = await supabaseClient
       .from('action_cards')
       .select('*')
@@ -41,10 +38,13 @@ serve(async (req) => {
       throw new Error('This action has already been executed.')
     }
 
-    const targetId = card.campaign_id // Note: database column holds the target UUID (campaign_id)
-    if (!targetId) throw new Error('This action card does not have a target ID.')
+    const targetId = card.campaign_id
+    const actionType = card.action_type.toUpperCase()
+    
+    if (!targetId && !['CREATE_CAMPAIGN', 'CREATE_AD'].includes(actionType)) {
+      throw new Error('This action card does not have a target ID.')
+    }
 
-    // Fetch user settings to get Meta credentials
     const { data: settings, error: settingsError } = await supabaseClient
       .from('user_settings')
       .select('meta_access_token, meta_ad_account_id')
@@ -56,40 +56,191 @@ serve(async (req) => {
     }
 
     const token = settings.meta_access_token
+    let cleanId = settings.meta_ad_account_id.trim()
+    if (!cleanId.startsWith('act_')) {
+      cleanId = `act_${cleanId}`
+    }
 
-    // Look up meta_id by searching campaigns, ad_sets, and ads
+    const proposedChanges = card.proposed_changes || {}
+
+    // --- CREATION ACTIONS ---
+
+    if (actionType === 'CREATE_CAMPAIGN') {
+      const objMap: Record<string, string> = {
+        'CONVERSIONS': 'OUTCOME_SALES',
+        'SALES': 'OUTCOME_SALES',
+        'LEADS': 'OUTCOME_LEADS',
+        'TRAFFIC': 'OUTCOME_TRAFFIC',
+        'AWARENESS': 'OUTCOME_AWARENESS',
+        'REACH': 'OUTCOME_AWARENESS',
+        'ENGAGEMENT': 'OUTCOME_ENGAGEMENT'
+      }
+      const mappedObjective = objMap[(proposedChanges.objective || 'CONVERSIONS').toUpperCase()] || 'OUTCOME_SALES'
+      const budgetInCents = Math.round((proposedChanges.daily_budget || 50) * 100)
+
+      const metaUrl = `https://graph.facebook.com/v21.0/${cleanId}/campaigns`
+      const res = await fetch(metaUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: proposedChanges.name,
+          objective: mappedObjective,
+          status: 'PAUSED',
+          daily_budget: budgetInCents,
+          bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
+          special_ad_categories: ['NONE'],
+          access_token: token
+        })
+      })
+
+      const metaData = await res.json()
+      if (!res.ok) throw new Error(`Meta API Error: ${JSON.stringify(metaData.error || metaData)}`)
+
+      const metaCampaignId = metaData.id
+
+      const newCampaign = await supabaseClient.from('campaigns').insert({
+        user_id: user.id,
+        meta_id: metaCampaignId,
+        name: proposedChanges.name,
+        status: 'PAUSED',
+        daily_budget: proposedChanges.daily_budget,
+        targeting: proposedChanges.targeting || {},
+        performance_metrics: { spend: 0, impressions: 0, ctr: 0, cpc: 0, objective: mappedObjective }
+      }).select().single()
+
+      if (newCampaign.error) throw new Error(newCampaign.error.message)
+
+      await supabaseClient.from('action_cards').update({ status: 'APPROVED', resolved_at: new Date().toISOString() }).eq('id', action_card_id)
+
+      await supabaseClient.from('agent_memory').insert({
+        user_id: user.id,
+        campaign_id: newCampaign.data.id,
+        decision_made: 'EXECUTED ACTION: CREATE_CAMPAIGN',
+        reasoning_snapshot: `Created campaign on Meta (ID: ${metaCampaignId})`
+      })
+
+      return new Response(JSON.stringify({ success: true, meta_id: metaCampaignId, level: 'campaign' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    }
+
+    if (actionType === 'CREATE_AD_SET') {
+      const { data: campaign } = await supabaseClient.from('campaigns').select('meta_id').eq('id', proposedChanges.campaign_id).single()
+      if (!campaign?.meta_id) throw new Error('Parent campaign does not have a real Meta ID.')
+
+      const metaUrl = `https://graph.facebook.com/v21.0/${cleanId}/adsets`
+      const payload: any = {
+        campaign_id: campaign.meta_id,
+        name: proposedChanges.name,
+        status: 'ACTIVE',
+        billing_event: 'IMPRESSIONS',
+        optimization_goal: 'LINK_CLICKS',
+        targeting: { geo_locations: { countries: ['PK'] }, age_min: 18, age_max: 65 },
+        access_token: token
+      }
+      if (proposedChanges.bid_amount) payload.bid_amount = Math.round(proposedChanges.bid_amount * 100)
+
+      const res = await fetch(metaUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      const metaData = await res.json()
+      if (!res.ok) throw new Error(`Meta API Error: ${JSON.stringify(metaData.error || metaData)}`)
+
+      const metaAdSetId = metaData.id
+
+      const newAdSet = await supabaseClient.from('ad_sets').insert({
+        user_id: user.id,
+        campaign_id: proposedChanges.campaign_id,
+        meta_id: metaAdSetId,
+        name: proposedChanges.name,
+        targeting: proposedChanges.targeting || {},
+        status: 'ACTIVE',
+        performance_metrics: { spend: 0, impressions: 0, ctr: 0, cpc: 0 }
+      }).select().single()
+
+      if (newAdSet.error) throw new Error(newAdSet.error.message)
+
+      await supabaseClient.from('action_cards').update({ status: 'APPROVED', resolved_at: new Date().toISOString() }).eq('id', action_card_id)
+
+      await supabaseClient.from('agent_memory').insert({
+        user_id: user.id,
+        campaign_id: proposedChanges.campaign_id,
+        decision_made: 'EXECUTED ACTION: CREATE_AD_SET',
+        reasoning_snapshot: `Created ad set on Meta (ID: ${metaAdSetId})`
+      })
+
+      return new Response(JSON.stringify({ success: true, meta_id: metaAdSetId, level: 'ad_set' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    }
+
+    if (actionType === 'CREATE_AD') {
+      const { data: adSet } = await supabaseClient.from('ad_sets').select('meta_id').eq('id', proposedChanges.ad_set_id).single()
+      if (!adSet?.meta_id) throw new Error('Parent ad set does not have a real Meta ID.')
+
+      const pagesRes = await fetch(`https://graph.facebook.com/v21.0/me/accounts?access_token=${token}`)
+      const pagesData = await pagesRes.json()
+      const pageId = pagesData.data?.[0]?.id
+      if (!pageId) throw new Error('No Facebook Page found connected to this token.')
+
+      const creativeRes = await fetch(`https://graph.facebook.com/v21.0/${cleanId}/adcreatives`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: `Creative for ${proposedChanges.name}`,
+          object_story_spec: { page_id: pageId, link_data: { message: proposedChanges.copy, link: 'https://metaagent.ai', name: proposedChanges.name } },
+          access_token: token
+        })
+      })
+      const creativeData = await creativeRes.json()
+      if (!creativeRes.ok) throw new Error(`Meta Ad Creative Error: ${JSON.stringify(creativeData.error || creativeData)}`)
+      const creativeId = creativeData.id
+
+      const adRes = await fetch(`https://graph.facebook.com/v21.0/${cleanId}/ads`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adset_id: adSet.meta_id, creative: { creative_id: creativeId }, name: proposedChanges.name, status: 'ACTIVE', access_token: token })
+      })
+      const adData = await adRes.json()
+      if (!adRes.ok) throw new Error(`Meta Ad Error: ${JSON.stringify(adData.error || adData)}`)
+      const metaAdId = adData.id
+
+      const newAd = await supabaseClient.from('ads').insert({
+        user_id: user.id,
+        ad_set_id: proposedChanges.ad_set_id,
+        meta_id: metaAdId,
+        name: proposedChanges.name,
+        creative_url: proposedChanges.creative_url || '',
+        copy: proposedChanges.copy || '',
+        cta: proposedChanges.cta || 'SHOP_NOW',
+        status: 'ACTIVE',
+        performance_metrics: { spend: 0, impressions: 0, ctr: 0, cpc: 0 }
+      }).select().single()
+
+      if (newAd.error) throw new Error(newAd.error.message)
+
+      await supabaseClient.from('action_cards').update({ status: 'APPROVED', resolved_at: new Date().toISOString() }).eq('id', action_card_id)
+
+      await supabaseClient.from('agent_memory').insert({
+        user_id: user.id,
+        campaign_id: proposedChanges.ad_set_id, // ad set id for tracking reference
+        decision_made: 'EXECUTED ACTION: CREATE_AD',
+        reasoning_snapshot: `Created ad on Meta (ID: ${metaAdId})`
+      })
+
+      return new Response(JSON.stringify({ success: true, meta_id: metaAdId, level: 'ad' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    }
+
+    // --- MODIFICATION ACTIONS ---
+
     let metaId = ''
-    let level = '' // 'campaign', 'ad_set', or 'ad'
+    let level = '' 
 
-    // Check campaigns first
-    const { data: campaign } = await supabaseClient
-      .from('campaigns')
-      .select('meta_id')
-      .eq('id', targetId)
-      .maybeSingle()
-
+    const { data: campaign } = await supabaseClient.from('campaigns').select('meta_id').eq('id', targetId).maybeSingle()
     if (campaign?.meta_id) {
       metaId = campaign.meta_id
       level = 'campaign'
     } else {
-      // Check ad_sets
-      const { data: adSet } = await supabaseClient
-        .from('ad_sets')
-        .select('meta_id')
-        .eq('id', targetId)
-        .maybeSingle()
-
+      const { data: adSet } = await supabaseClient.from('ad_sets').select('meta_id').eq('id', targetId).maybeSingle()
       if (adSet?.meta_id) {
         metaId = adSet.meta_id
         level = 'ad_set'
       } else {
-        // Check ads
-        const { data: ad } = await supabaseClient
-          .from('ads')
-          .select('meta_id')
-          .eq('id', targetId)
-          .maybeSingle()
-
+        const { data: ad } = await supabaseClient.from('ads').select('meta_id').eq('id', targetId).maybeSingle()
         if (ad?.meta_id) {
           metaId = ad.meta_id
           level = 'ad'
@@ -97,16 +248,10 @@ serve(async (req) => {
       }
     }
 
-    if (!metaId) {
-      throw new Error('Target entity has no real Meta ID. It may be mock data.')
-    }
+    if (!metaId) throw new Error('Target entity has no real Meta ID. It may be mock data.')
 
-    // Parse proposed changes to build Meta payload
-    const proposedChanges = card.proposed_changes || {}
     const updateBody: any = { access_token: token }
 
-    // Map actions
-    const actionType = card.action_type.toUpperCase()
     if (actionType === 'PAUSE' || proposedChanges.status === 'PAUSED') {
       updateBody.status = 'PAUSED'
     } else if (actionType === 'RESUME' || proposedChanges.status === 'ACTIVE') {
@@ -120,7 +265,6 @@ serve(async (req) => {
 
     console.log(`Executing Meta Action on ${level} (ID: ${metaId}):`, JSON.stringify(updateBody))
 
-    // Send update request to Meta Graph API
     const metaUrl = `https://graph.facebook.com/v21.0/${metaId}`
     const response = await fetch(metaUrl, {
       method: 'POST',
@@ -129,42 +273,21 @@ serve(async (req) => {
     })
 
     const data = await response.json()
-    if (!response.ok) {
-      throw new Error(`Meta API Write Error: ${data.error?.message || 'Unknown error'}`)
-    }
+    if (!response.ok) throw new Error(`Meta API Write Error: ${data.error?.message || 'Unknown error'}`)
 
-    // Success! Update local database row status to reflect the new state
-    const localTableMap: Record<string, string> = {
-      'campaign': 'campaigns',
-      'ad_set': 'ad_sets',
-      'ad': 'ads'
-    }
+    const localTableMap: Record<string, string> = { 'campaign': 'campaigns', 'ad_set': 'ad_sets', 'ad': 'ads' }
     const tableName = localTableMap[level]
 
     const dbPayload: any = {}
     if (updateBody.status) dbPayload.status = updateBody.status
     if (newBudget) dbPayload.daily_budget = parseFloat(newBudget)
 
-    const { error: dbUpdateErr } = await supabaseClient
-      .from(tableName)
-      .update(dbPayload)
-      .eq('id', targetId)
+    const { error: dbUpdateErr } = await supabaseClient.from(tableName).update(dbPayload).eq('id', targetId)
+    if (dbUpdateErr) console.warn(`Meta updated but failed to update local DB status:`, dbUpdateErr.message)
 
-    if (dbUpdateErr) {
-      console.warn(`Meta updated but failed to update local DB status:`, dbUpdateErr.message)
-    }
+    const { error: cardUpdateErr } = await supabaseClient.from('action_cards').update({ status: 'APPROVED', resolved_at: new Date().toISOString() }).eq('id', action_card_id)
+    if (cardUpdateErr) console.warn(`Failed to mark action card as APPROVED:`, cardUpdateErr.message)
 
-    // Mark the Action Card as APPROVED / RESOLVED
-    const { error: cardUpdateErr } = await supabaseClient
-      .from('action_cards')
-      .update({ status: 'APPROVED', resolved_at: new Date().toISOString() })
-      .eq('id', action_card_id)
-
-    if (cardUpdateErr) {
-      console.warn(`Failed to mark action card as APPROVED:`, cardUpdateErr.message)
-    }
-
-    // Log the successful execution in agent memory
     await supabaseClient.from('agent_memory').insert({
       user_id: user.id,
       campaign_id: targetId,
@@ -172,16 +295,10 @@ serve(async (req) => {
       reasoning_snapshot: `Successfully executed action on Meta (ID: ${metaId}) and synchronized local database.`
     })
 
-    return new Response(
-      JSON.stringify({ success: true, meta_id: metaId, level }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
+    return new Response(JSON.stringify({ success: true, meta_id: metaId, level }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
 
   } catch (error: any) {
     console.error('Meta action executor error:', error.message)
-    return new Response(
-      JSON.stringify({ success: false, error: error.message }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
-    )
+    return new Response(JSON.stringify({ success: false, error: error.message }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 })
   }
 })

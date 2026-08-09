@@ -1140,256 +1140,80 @@ async function executeTool(
     }
 
     case 'create_campaign': {
-      if (!metaToken || !metaAdAccountId) {
-        return JSON.stringify({ error: 'Meta connection not configured in Settings. Cannot write to Meta.' })
-      }
-      
-      let cleanId = metaAdAccountId.trim()
-      if (!cleanId.startsWith('act_')) {
-        cleanId = `act_${cleanId}`
-      }
-
-      // Map objective to ODAX format
-      const objMap: Record<string, string> = {
-        'CONVERSIONS': 'OUTCOME_SALES',
-        'SALES': 'OUTCOME_SALES',
-        'LEADS': 'OUTCOME_LEADS',
-        'TRAFFIC': 'OUTCOME_TRAFFIC',
-        'AWARENESS': 'OUTCOME_AWARENESS',
-        'REACH': 'OUTCOME_AWARENESS',
-        'ENGAGEMENT': 'OUTCOME_ENGAGEMENT'
-      }
-      const mappedObjective = objMap[(toolArgs.objective || 'CONVERSIONS').toUpperCase()] || 'OUTCOME_SALES'
-
-      // Meta expects daily_budget in cents
-      const budgetInCents = Math.round((toolArgs.daily_budget || 50) * 100)
-
-      console.log(`Creating real campaign on Meta for ad account ${cleanId}...`)
-
-      // Post to Meta Graph API
-      const metaUrl = `https://graph.facebook.com/v21.0/${cleanId}/campaigns`
-      const res = await fetch(metaUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: toolArgs.name,
-          objective: mappedObjective,
-          status: 'PAUSED',
-          daily_budget: budgetInCents,
-          bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
-          special_ad_categories: ['NONE'],
-          access_token: metaToken
-        })
-      })
-
-      const metaData = await res.json()
-      if (!res.ok) {
-        return JSON.stringify({ error: `Meta API Error: ${JSON.stringify(metaData.error || metaData)}` })
-      }
-
-      const metaCampaignId = metaData.id
-
-      // Save to local Supabase
-      const newCampaign = await supabaseClient.from('campaigns').insert({
+      const cardRes = await supabaseClient.from('action_cards').insert({
         user_id: userId,
-        meta_id: metaCampaignId,
-        name: toolArgs.name,
-        status: 'PAUSED',
-        daily_budget: toolArgs.daily_budget,
-        targeting: toolArgs.targeting || {},
-        performance_metrics: { spend: 0, impressions: 0, ctr: 0, cpc: 0, objective: mappedObjective }
+        campaign_id: null,
+        priority: 'HIGH',
+        action_type: 'CREATE_CAMPAIGN',
+        proposed_changes: toolArgs,
+        reasoning: `Proposed creating new campaign: ${toolArgs.name}`,
+        status: 'PENDING'
       }).select().single()
 
-      if (newCampaign.error) return JSON.stringify({ error: newCampaign.error.message })
+      if (cardRes.error) return JSON.stringify({ error: cardRes.error.message })
 
       await supabaseClient.from('agent_memory').insert({
         user_id: userId,
-        campaign_id: newCampaign.data.id,
-        decision_made: 'CREATED REAL CAMPAIGN: ' + toolArgs.name,
-        reasoning_snapshot: 'New campaign created on Meta (ID: ' + metaCampaignId + ') with daily budget ' + toolArgs.daily_budget
+        campaign_id: null,
+        decision_made: 'Proposed CREATE_CAMPAIGN: ' + toolArgs.name,
+        reasoning_snapshot: 'Queued action card for user approval to create campaign with daily budget ' + toolArgs.daily_budget
       })
 
       return JSON.stringify({
         success: true,
-        campaign: newCampaign.data,
-        message: `Campaign "${toolArgs.name}" created successfully on Meta (ID: ${metaCampaignId}) in PAUSED status. Now create ad sets under it.`
+        message: `Action card created for campaign "${toolArgs.name}". Waiting for user approval before pushing to Meta.`
       })
     }
 
     case 'create_ad_set': {
-      if (!metaToken || !metaAdAccountId) {
-        return JSON.stringify({ error: 'Meta connection not configured in Settings. Cannot write to Meta.' })
-      }
-
-      let cleanId = metaAdAccountId.trim()
-      if (!cleanId.startsWith('act_')) {
-        cleanId = `act_${cleanId}`
-      }
-
-      // Look up real Meta Campaign ID
-      const { data: campaign } = await supabaseClient
-        .from('campaigns')
-        .select('meta_id')
-        .eq('id', toolArgs.campaign_id)
-        .single()
-
-      if (!campaign?.meta_id) {
-        return JSON.stringify({ error: 'Parent campaign does not have a real Meta ID. Sync or create it first.' })
-      }
-
-      console.log(`Creating real ad set on Meta for campaign ${campaign.meta_id}...`)
-
-      // Create ad set on Meta
-      const metaUrl = `https://graph.facebook.com/v21.0/${cleanId}/adsets`
-      const payload: any = {
-        campaign_id: campaign.meta_id,
-        name: toolArgs.name,
-        status: 'ACTIVE',
-        billing_event: 'IMPRESSIONS',
-        optimization_goal: 'LINK_CLICKS',
-        targeting: {
-          geo_locations: { countries: ['PK'] },
-          age_min: 18,
-          age_max: 65
-        },
-        access_token: metaToken
-      }
-
-      if (toolArgs.bid_amount) {
-        payload.bid_amount = Math.round(toolArgs.bid_amount * 100)
-      }
-
-      const res = await fetch(metaUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      })
-
-      const metaData = await res.json()
-      if (!res.ok) {
-        return JSON.stringify({ error: `Meta API Error: ${JSON.stringify(metaData.error || metaData)}` })
-      }
-
-      const metaAdSetId = metaData.id
-
-      // Save to local Supabase
-      const newAdSet = await supabaseClient.from('ad_sets').insert({
+      const cardRes = await supabaseClient.from('action_cards').insert({
         user_id: userId,
         campaign_id: toolArgs.campaign_id,
-        meta_id: metaAdSetId,
-        name: toolArgs.name,
-        targeting: toolArgs.targeting || {},
-        status: 'ACTIVE',
-        performance_metrics: { spend: 0, impressions: 0, ctr: 0, cpc: 0 }
+        priority: 'HIGH',
+        action_type: 'CREATE_AD_SET',
+        proposed_changes: toolArgs,
+        reasoning: `Proposed creating new ad set: ${toolArgs.name}`,
+        status: 'PENDING'
       }).select().single()
 
-      if (newAdSet.error) return JSON.stringify({ error: newAdSet.error.message })
+      if (cardRes.error) return JSON.stringify({ error: cardRes.error.message })
+
+      await supabaseClient.from('agent_memory').insert({
+        user_id: userId,
+        campaign_id: toolArgs.campaign_id,
+        decision_made: 'Proposed CREATE_AD_SET: ' + toolArgs.name,
+        reasoning_snapshot: 'Queued action card for user approval to create ad set.'
+      })
 
       return JSON.stringify({
         success: true,
-        ad_set: newAdSet.data,
-        message: `Ad Set "${toolArgs.name}" created successfully on Meta (ID: ${metaAdSetId}) under campaign. Now create ads under it.`
+        message: `Action card created for ad set "${toolArgs.name}". Waiting for user approval before pushing to Meta.`
       })
     }
 
     case 'create_ad': {
-      if (!metaToken || !metaAdAccountId) {
-        return JSON.stringify({ error: 'Meta connection not configured in Settings. Cannot write to Meta.' })
-      }
-
-      let cleanId = metaAdAccountId.trim()
-      if (!cleanId.startsWith('act_')) {
-        cleanId = `act_${cleanId}`
-      }
-
-      // 1. Look up parent ad set Meta ID
-      const { data: adSet } = await supabaseClient
-        .from('ad_sets')
-        .select('meta_id')
-        .eq('id', toolArgs.ad_set_id)
-        .single()
-
-      if (!adSet?.meta_id) {
-        return JSON.stringify({ error: 'Parent ad set does not have a real Meta ID.' })
-      }
-
-      // 2. Fetch a Page ID connected to this token
-      console.log('Fetching connected Facebook Pages to create creative...')
-      const pagesRes = await fetch(`https://graph.facebook.com/v21.0/me/accounts?access_token=${metaToken}`)
-      const pagesData = await pagesRes.json()
-      const pageId = pagesData.data?.[0]?.id
-
-      if (!pageId) {
-        return JSON.stringify({ error: 'No Facebook Page found connected to this token. Please create a Page or assign it to your System User first.' })
-      }
-
-      console.log(`Using Page ID ${pageId} to build ad creative...`)
-
-      // 3. Create Ad Creative first
-      const creativeRes = await fetch(`https://graph.facebook.com/v21.0/${cleanId}/adcreatives`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: `Creative for ${toolArgs.name}`,
-          object_story_spec: {
-            page_id: pageId,
-            link_data: {
-              message: toolArgs.copy,
-              link: 'https://metaagent.ai',
-              name: toolArgs.name
-            }
-          },
-          access_token: metaToken
-        })
-      })
-
-      const creativeData = await creativeRes.json()
-      if (!creativeRes.ok) {
-        return JSON.stringify({ error: `Meta Ad Creative Error: ${JSON.stringify(creativeData.error || creativeData)}` })
-      }
-
-      const creativeId = creativeData.id
-      console.log(`Ad Creative created (ID: ${creativeId}). Now creating real Ad...`)
-
-      // 4. Create Ad on Meta
-      const adRes = await fetch(`https://graph.facebook.com/v21.0/${cleanId}/ads`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          adset_id: adSet.meta_id,
-          creative: { creative_id: creativeId },
-          name: toolArgs.name,
-          status: 'ACTIVE',
-          access_token: metaToken
-        })
-      })
-
-      const adData = await adRes.json()
-      if (!adRes.ok) {
-        return JSON.stringify({ error: `Meta Ad Error: ${JSON.stringify(adData.error || adData)}` })
-      }
-
-      const metaAdId = adData.id
-
-      // 5. Save to local Supabase
-      const newAd = await supabaseClient.from('ads').insert({
+      const cardRes = await supabaseClient.from('action_cards').insert({
         user_id: userId,
-        ad_set_id: toolArgs.ad_set_id,
-        meta_id: metaAdId,
-        name: toolArgs.name,
-        creative_url: toolArgs.creative_url || '',
-        copy: toolArgs.copy || '',
-        cta: toolArgs.cta || 'SHOP_NOW',
-        status: 'ACTIVE',
-        performance_metrics: { spend: 0, impressions: 0, ctr: 0, cpc: 0 }
+        campaign_id: null, // No direct campaign link for ad creation at this level to avoid FK constraint errors, parent info is in proposed_changes
+        priority: 'HIGH',
+        action_type: 'CREATE_AD',
+        proposed_changes: toolArgs,
+        reasoning: `Proposed creating new ad: ${toolArgs.name}`,
+        status: 'PENDING'
       }).select().single()
 
-      if (newAd.error) return JSON.stringify({ error: newAd.error.message })
+      if (cardRes.error) return JSON.stringify({ error: cardRes.error.message })
+
+      await supabaseClient.from('agent_memory').insert({
+        user_id: userId,
+        campaign_id: null,
+        decision_made: 'Proposed CREATE_AD: ' + toolArgs.name,
+        reasoning_snapshot: 'Queued action card for user approval to create ad.'
+      })
 
       return JSON.stringify({
         success: true,
-        ad: newAd.data,
-        message: `Ad "${toolArgs.name}" created successfully on Meta (ID: ${metaAdId}) under ad set.`
+        message: `Action card created for ad "${toolArgs.name}". Waiting for user approval before pushing to Meta.`
       })
     }
 
