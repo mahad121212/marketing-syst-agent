@@ -228,36 +228,38 @@ serve(async (req) => {
     }
 
     // --- MODIFICATION ACTIONS (from propose_action_card) ---
-    // The agent uses propose_action_card with action_types like:
+    // The agent uses propose_action_card with freeform action_types like:
     //   PAUSE_CAMPAIGN, RESUME_CAMPAIGN, INCREASE_BUDGET, DECREASE_BUDGET,
-    //   UPDATE_TARGETING, PAUSE_AD_SET, PAUSE_AD, etc.
+    //   RENAME, CREATE_NEW, UPDATE_TARGETING, PAUSE_AD_SET, PAUSE_AD, etc.
     // We normalize these to figure out WHAT to do and WHICH level to target.
 
     let metaId = ''
     let level = '' 
 
     // First try to resolve targetId across all 3 tables (campaigns, ad_sets, ads)
-    const { data: campaign } = await supabaseClient.from('campaigns').select('meta_id').eq('id', targetId).maybeSingle()
-    if (campaign?.meta_id) {
-      metaId = campaign.meta_id
-      level = 'campaign'
-    } else {
-      const { data: adSet } = await supabaseClient.from('ad_sets').select('meta_id').eq('id', targetId).maybeSingle()
-      if (adSet?.meta_id) {
-        metaId = adSet.meta_id
-        level = 'ad_set'
+    if (targetId) {
+      const { data: campaign } = await supabaseClient.from('campaigns').select('meta_id').eq('id', targetId).maybeSingle()
+      if (campaign?.meta_id) {
+        metaId = campaign.meta_id
+        level = 'campaign'
       } else {
-        const { data: ad } = await supabaseClient.from('ads').select('meta_id').eq('id', targetId).maybeSingle()
-        if (ad?.meta_id) {
-          metaId = ad.meta_id
-          level = 'ad'
+        const { data: adSet } = await supabaseClient.from('ad_sets').select('meta_id').eq('id', targetId).maybeSingle()
+        if (adSet?.meta_id) {
+          metaId = adSet.meta_id
+          level = 'ad_set'
+        } else {
+          const { data: ad } = await supabaseClient.from('ads').select('meta_id').eq('id', targetId).maybeSingle()
+          if (ad?.meta_id) {
+            metaId = ad.meta_id
+            level = 'ad'
+          }
         }
       }
     }
 
-    if (!metaId) throw new Error(`Target entity (ID: ${targetId}) has no real Meta ID. It may not be synced with Meta yet.`)
-
+    // Build the update payload from proposed_changes
     const updateBody: any = { access_token: token }
+    const localDbPayload: any = {}
 
     // Normalize action types — the agent may send PAUSE_CAMPAIGN, PAUSE_AD_SET, PAUSE, etc.
     const normalizedAction = actionType
@@ -265,66 +267,96 @@ serve(async (req) => {
       .replace(/_AD_SET/g, '')
       .replace(/_AD$/g, '')
 
+    // 1. Status changes (PAUSE, RESUME, ACTIVATE)
     if (normalizedAction === 'PAUSE' || proposedChanges.status === 'PAUSED') {
       updateBody.status = 'PAUSED'
+      localDbPayload.status = 'PAUSED'
     } else if (normalizedAction === 'RESUME' || normalizedAction === 'ACTIVATE' || proposedChanges.status === 'ACTIVE') {
       updateBody.status = 'ACTIVE'
+      localDbPayload.status = 'ACTIVE'
     }
 
-    // Handle budget changes — the agent may use various field names
+    // 2. Name changes (RENAME, CREATE_NEW, or any action with new_name)
+    const newName = proposedChanges.new_name || proposedChanges.name
+    if (newName) {
+      updateBody.name = newName
+      localDbPayload.name = newName
+    }
+
+    // 3. Budget changes — the agent may use various field names
     const newBudget = proposedChanges.daily_budget || proposedChanges.budget || proposedChanges.new_budget || proposedChanges.new_daily_budget
     if (newBudget) {
       updateBody.daily_budget = Math.round(parseFloat(newBudget) * 100)
+      localDbPayload.daily_budget = parseFloat(newBudget)
     }
 
-    // If after all normalization we have nothing to send besides access_token, the action type is unsupported
-    if (Object.keys(updateBody).length <= 1) {
-      // Still mark the card as approved since the user explicitly approved it
+    // If we found a real Meta ID, push the update to Meta
+    if (metaId && Object.keys(updateBody).length > 1) {
+      console.log(`Executing Meta Action on ${level} (ID: ${metaId}):`, JSON.stringify(updateBody))
+
+      const metaUrl = `https://graph.facebook.com/v21.0/${metaId}`
+      const response = await fetch(metaUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updateBody)
+      })
+
+      const data = await response.json()
+      if (!response.ok) throw new Error(`Meta API Write Error: ${data.error?.message || 'Unknown error'}`)
+
+      // Sync local DB
+      if (targetId && Object.keys(localDbPayload).length > 0) {
+        const localTableMap: Record<string, string> = { 'campaign': 'campaigns', 'ad_set': 'ad_sets', 'ad': 'ads' }
+        const tableName = localTableMap[level]
+        if (tableName) {
+          const { error: dbUpdateErr } = await supabaseClient.from(tableName).update(localDbPayload).eq('id', targetId)
+          if (dbUpdateErr) console.warn(`Meta updated but failed to update local DB:`, dbUpdateErr.message)
+        }
+      }
+
       await supabaseClient.from('action_cards').update({ status: 'APPROVED', resolved_at: new Date().toISOString() }).eq('id', action_card_id)
-      
+
       await supabaseClient.from('agent_memory').insert({
         user_id: user.id,
         campaign_id: targetId,
-        decision_made: `ACKNOWLEDGED ACTION: ${actionType}`,
-        reasoning_snapshot: `Action type "${actionType}" was approved but does not map to a direct Meta API update. The card has been marked as approved.`
+        decision_made: `EXECUTED ACTION: ${actionType} on ${level.toUpperCase()}`,
+        reasoning_snapshot: `Successfully executed action on Meta (ID: ${metaId}) and synchronized local database.`
       })
 
-      return new Response(JSON.stringify({ success: true, meta_id: metaId, level, note: `Action "${actionType}" acknowledged. No direct Meta API update was needed.` }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+      return new Response(JSON.stringify({ success: true, meta_id: metaId, level }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
-    console.log(`Executing Meta Action on ${level} (ID: ${metaId}):`, JSON.stringify(updateBody))
+    // If we have local-only changes (no Meta ID, or action doesn't map to Meta API),
+    // still sync locally and mark card as approved
+    if (targetId && Object.keys(localDbPayload).length > 0) {
+      // Try to update local DB even without Meta
+      for (const table of ['campaigns', 'ad_sets', 'ads']) {
+        const { error } = await supabaseClient.from(table).update(localDbPayload).eq('id', targetId)
+        if (!error) {
+          level = table === 'campaigns' ? 'campaign' : table === 'ad_sets' ? 'ad_set' : 'ad'
+          break
+        }
+      }
+    }
 
-    const metaUrl = `https://graph.facebook.com/v21.0/${metaId}`
-    const response = await fetch(metaUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updateBody)
-    })
-
-    const data = await response.json()
-    if (!response.ok) throw new Error(`Meta API Write Error: ${data.error?.message || 'Unknown error'}`)
-
-    const localTableMap: Record<string, string> = { 'campaign': 'campaigns', 'ad_set': 'ad_sets', 'ad': 'ads' }
-    const tableName = localTableMap[level]
-
-    const dbPayload: any = {}
-    if (updateBody.status) dbPayload.status = updateBody.status
-    if (newBudget) dbPayload.daily_budget = parseFloat(newBudget)
-
-    const { error: dbUpdateErr } = await supabaseClient.from(tableName).update(dbPayload).eq('id', targetId)
-    if (dbUpdateErr) console.warn(`Meta updated but failed to update local DB status:`, dbUpdateErr.message)
-
-    const { error: cardUpdateErr } = await supabaseClient.from('action_cards').update({ status: 'APPROVED', resolved_at: new Date().toISOString() }).eq('id', action_card_id)
-    if (cardUpdateErr) console.warn(`Failed to mark action card as APPROVED:`, cardUpdateErr.message)
+    // Always mark the card as approved since the user explicitly approved it
+    await supabaseClient.from('action_cards').update({ status: 'APPROVED', resolved_at: new Date().toISOString() }).eq('id', action_card_id)
 
     await supabaseClient.from('agent_memory').insert({
       user_id: user.id,
       campaign_id: targetId,
-      decision_made: `EXECUTED ACTION: ${actionType} on ${level.toUpperCase()}`,
-      reasoning_snapshot: `Successfully executed action on Meta (ID: ${metaId}) and synchronized local database.`
+      decision_made: `EXECUTED ACTION: ${actionType}`,
+      reasoning_snapshot: metaId 
+        ? `Action executed on Meta (ID: ${metaId}) but had no changes to push.`
+        : `Action "${actionType}" approved. ${Object.keys(localDbPayload).length > 0 ? 'Local database updated.' : 'No direct Meta API update was possible (entity may not be synced with Meta yet).'} Card marked as approved.`
     })
 
-    return new Response(JSON.stringify({ success: true, meta_id: metaId, level }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    return new Response(JSON.stringify({ 
+      success: true, 
+      meta_id: metaId || null, 
+      level: level || 'unknown',
+      note: metaId ? 'Action completed.' : `Action "${actionType}" approved and logged. The target entity may not be synced with Meta yet.`
+    }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
 
   } catch (error: any) {
     console.error('Meta action executor error:', error.message)
