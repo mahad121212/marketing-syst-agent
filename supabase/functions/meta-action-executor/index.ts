@@ -233,6 +233,9 @@ serve(async (req) => {
     //   RENAME, CREATE_NEW, UPDATE_TARGETING, PAUSE_AD_SET, PAUSE_AD, etc.
     // We normalize these to figure out WHAT to do and WHICH level to target.
 
+    let metaId = ''
+    let level = ''
+
     // Multi-strategy Meta ID resolution:
     // Strategy 1: Is targetId directly a numeric Meta ID? (e.g. "52586793602259")
     if (targetId && /^\d+$/.test(targetId)) {
