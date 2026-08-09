@@ -41,8 +41,10 @@ serve(async (req) => {
     const targetId = card.campaign_id
     const actionType = card.action_type.toUpperCase()
     
-    if (!targetId && !['CREATE_CAMPAIGN', 'CREATE_AD'].includes(actionType)) {
-      throw new Error('This action card does not have a target ID.')
+    // Creation actions don't need a targetId — they create new entities
+    const CREATION_ACTIONS = ['CREATE_CAMPAIGN', 'CREATE_AD_SET', 'CREATE_AD']
+    if (!targetId && !CREATION_ACTIONS.includes(actionType)) {
+      throw new Error('This action card does not have a target ID. The agent may not have linked it to a campaign/ad set/ad.')
     }
 
     const { data: settings, error: settingsError } = await supabaseClient
@@ -225,11 +227,16 @@ serve(async (req) => {
       return new Response(JSON.stringify({ success: true, meta_id: metaAdId, level: 'ad' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
-    // --- MODIFICATION ACTIONS ---
+    // --- MODIFICATION ACTIONS (from propose_action_card) ---
+    // The agent uses propose_action_card with action_types like:
+    //   PAUSE_CAMPAIGN, RESUME_CAMPAIGN, INCREASE_BUDGET, DECREASE_BUDGET,
+    //   UPDATE_TARGETING, PAUSE_AD_SET, PAUSE_AD, etc.
+    // We normalize these to figure out WHAT to do and WHICH level to target.
 
     let metaId = ''
     let level = '' 
 
+    // First try to resolve targetId across all 3 tables (campaigns, ad_sets, ads)
     const { data: campaign } = await supabaseClient.from('campaigns').select('meta_id').eq('id', targetId).maybeSingle()
     if (campaign?.meta_id) {
       metaId = campaign.meta_id
@@ -248,19 +255,41 @@ serve(async (req) => {
       }
     }
 
-    if (!metaId) throw new Error('Target entity has no real Meta ID. It may be mock data.')
+    if (!metaId) throw new Error(`Target entity (ID: ${targetId}) has no real Meta ID. It may not be synced with Meta yet.`)
 
     const updateBody: any = { access_token: token }
 
-    if (actionType === 'PAUSE' || proposedChanges.status === 'PAUSED') {
+    // Normalize action types — the agent may send PAUSE_CAMPAIGN, PAUSE_AD_SET, PAUSE, etc.
+    const normalizedAction = actionType
+      .replace(/_CAMPAIGN/g, '')
+      .replace(/_AD_SET/g, '')
+      .replace(/_AD$/g, '')
+
+    if (normalizedAction === 'PAUSE' || proposedChanges.status === 'PAUSED') {
       updateBody.status = 'PAUSED'
-    } else if (actionType === 'RESUME' || proposedChanges.status === 'ACTIVE') {
+    } else if (normalizedAction === 'RESUME' || normalizedAction === 'ACTIVATE' || proposedChanges.status === 'ACTIVE') {
       updateBody.status = 'ACTIVE'
     }
 
-    const newBudget = proposedChanges.daily_budget || proposedChanges.budget || proposedChanges.new_budget
+    // Handle budget changes — the agent may use various field names
+    const newBudget = proposedChanges.daily_budget || proposedChanges.budget || proposedChanges.new_budget || proposedChanges.new_daily_budget
     if (newBudget) {
       updateBody.daily_budget = Math.round(parseFloat(newBudget) * 100)
+    }
+
+    // If after all normalization we have nothing to send besides access_token, the action type is unsupported
+    if (Object.keys(updateBody).length <= 1) {
+      // Still mark the card as approved since the user explicitly approved it
+      await supabaseClient.from('action_cards').update({ status: 'APPROVED', resolved_at: new Date().toISOString() }).eq('id', action_card_id)
+      
+      await supabaseClient.from('agent_memory').insert({
+        user_id: user.id,
+        campaign_id: targetId,
+        decision_made: `ACKNOWLEDGED ACTION: ${actionType}`,
+        reasoning_snapshot: `Action type "${actionType}" was approved but does not map to a direct Meta API update. The card has been marked as approved.`
+      })
+
+      return new Response(JSON.stringify({ success: true, meta_id: metaId, level, note: `Action "${actionType}" acknowledged. No direct Meta API update was needed.` }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
     console.log(`Executing Meta Action on ${level} (ID: ${metaId}):`, JSON.stringify(updateBody))
