@@ -38,14 +38,9 @@ serve(async (req) => {
       throw new Error('This action has already been executed.')
     }
 
-    const targetId = card.campaign_id
+    let targetId = card.campaign_id || card.proposed_changes?.campaign_id || card.proposed_changes?.target_id || null
     const actionType = card.action_type.toUpperCase()
-    
-    // Creation actions don't need a targetId — they create new entities
-    const CREATION_ACTIONS = ['CREATE_CAMPAIGN', 'CREATE_AD_SET', 'CREATE_AD']
-    if (!targetId && !CREATION_ACTIONS.includes(actionType)) {
-      throw new Error('This action card does not have a target ID. The agent may not have linked it to a campaign/ad set/ad.')
-    }
+    const proposedChanges = card.proposed_changes || {}
 
     const { data: settings, error: settingsError } = await supabaseClient
       .from('user_settings')
@@ -63,7 +58,39 @@ serve(async (req) => {
       cleanId = `act_${cleanId}`
     }
 
-    const proposedChanges = card.proposed_changes || {}
+    // --- BATCH CAMPAIGN ACTIONS (e.g. Pause all campaigns) ---
+    if (Array.isArray(proposedChanges.campaign_ids) && proposedChanges.campaign_ids.length > 0) {
+      const targetStatus = (actionType.includes('PAUSE') || proposedChanges.status === 'PAUSED') ? 'PAUSED' : 'ACTIVE'
+      const updatedIds: string[] = []
+
+      for (const cMetaId of proposedChanges.campaign_ids) {
+        try {
+          const res = await fetch(`https://graph.facebook.com/v21.0/${cMetaId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: targetStatus, access_token: token })
+          })
+          if (res.ok) updatedIds.push(cMetaId)
+        } catch (err) {
+          console.warn(`Failed to update campaign ${cMetaId}:`, err)
+        }
+      }
+
+      await supabaseClient.from('action_cards').update({ status: 'APPROVED', resolved_at: new Date().toISOString() }).eq('id', action_card_id)
+      await supabaseClient.from('agent_memory').insert({
+        user_id: user.id,
+        campaign_id: null,
+        decision_made: `EXECUTED BATCH ACTION: ${actionType} on ${updatedIds.length} campaigns`,
+        reasoning_snapshot: `Updated status to ${targetStatus} for campaigns: ${updatedIds.join(', ')}`
+      })
+
+      return new Response(JSON.stringify({ 
+        success: true, 
+        meta_id: updatedIds.join(', '), 
+        level: 'campaigns',
+        note: `Updated ${updatedIds.length} campaigns to ${targetStatus} on Meta.`
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    }
 
     // --- CREATION ACTIONS ---
 

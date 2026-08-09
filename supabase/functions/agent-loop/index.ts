@@ -1825,6 +1825,7 @@ serve(async (req) => {
         ...history
       ]
 
+      let hasExecutedActionTool = false
       const MAX_ITERATIONS = 6
       for (let i = 0; i < MAX_ITERATIONS; i++) {
         thinkingSteps.push('Iteration ' + (i + 1) + ': Reasoning with ' + model + '...')
@@ -1837,8 +1838,7 @@ serve(async (req) => {
             model: reqDetails.model,
             max_tokens: maxTokens,
             messages: finalMessages,
-            tools: AGENT_TOOLS,
-            tool_choice: 'auto'
+            ...(hasExecutedActionTool ? {} : { tools: AGENT_TOOLS, tool_choice: 'auto' })
           })
         })
 
@@ -1869,8 +1869,12 @@ serve(async (req) => {
 
             try {
               const parsed = JSON.parse(toolResult)
-              if (parsed.type === 'PROPOSAL' || parsed.type === 'GOAL_PROPOSAL') proposals.push(parsed)
+              if (parsed.type === 'PROPOSAL' || parsed.type === 'ACTION_PROPOSAL' || parsed.type === 'GOAL_PROPOSAL') proposals.push(parsed)
             } catch {}
+
+            if (['create_campaign', 'create_ad_set', 'create_ad', 'propose_action_card'].includes(toolName)) {
+              hasExecutedActionTool = true
+            }
 
             toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult.substring(0, 500), status: 'success' })
             finalMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResult })
