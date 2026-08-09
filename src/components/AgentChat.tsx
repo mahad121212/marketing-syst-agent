@@ -105,6 +105,17 @@ interface ChatSession {
   last_viewed_at?: string;
 }
 
+interface ActionCard {
+  id: string;
+  campaign_id: string | null;
+  priority: 'MANDATORY' | 'HIGH' | 'LOW';
+  action_type: string;
+  proposed_changes: any;
+  reasoning: string;
+  status: string;
+  created_at: string;
+}
+
 interface GoalSchedule {
   id: string;
   target_id: string;
@@ -146,6 +157,9 @@ export const AgentChat: React.FC<AgentChatProps> = ({
   const [inputText, setInputText] = useState('');
   const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({});
   const [showGoalLibrary, setShowGoalLibrary] = useState(false);
+  const [showActionLibrary, setShowActionLibrary] = useState(false);
+  const [actionCards, setActionCards] = useState<ActionCard[]>([]);
+  const [executingActionId, setExecutingActionId] = useState<string | null>(null);
   const [goalSchedules, setGoalSchedules] = useState<GoalSchedule[]>([]);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -185,9 +199,37 @@ export const AgentChat: React.FC<AgentChatProps> = ({
     if (data) setGoalSchedules(data);
   };
 
+  const loadActionCards = async () => {
+    if (!currentSessionId) return;
+    const { data } = await supabase
+      .from('action_cards')
+      .select('*')
+      .eq('session_id', currentSessionId)
+      .order('created_at', { ascending: false });
+    if (data) setActionCards(data);
+  };
+
+  const handleApproveAction = async (id: string) => {
+    setExecutingActionId(id);
+    try {
+      const { data, error: execError } = await supabase.functions.invoke('meta-action-executor', {
+        body: { action_card_id: id }
+      });
+      if (execError) throw execError;
+      if (data && !data.success) throw new Error(data.error);
+      
+      alert(`Action successfully executed on Meta Ads Manager! Real ID: ${data?.meta_id || 'N/A'}`);
+      loadActionCards();
+    } catch (err: any) {
+      alert('Failed to execute action: ' + (err.message || 'Unknown error'));
+    } finally {
+      setExecutingActionId(null);
+    }
+  };
+
   // Reload goals whenever session changes
   React.useEffect(() => {
-    if (currentSessionId) loadGoalSchedules();
+    if (currentSessionId) { loadGoalSchedules(); loadActionCards(); }
   }, [currentSessionId, messages]);
 
   const handleApproveGoal = async (goalId: string) => {
@@ -381,7 +423,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
             </span>
             {/* Goal Library Button */}
             <button
-              onClick={() => { setShowGoalLibrary(!showGoalLibrary); loadGoalSchedules(); }}
+              onClick={() => { setShowGoalLibrary(!showGoalLibrary); setShowActionLibrary(false); loadGoalSchedules(); }}
               style={{
                 display: 'flex', alignItems: 'center', gap: '6px',
                 padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
@@ -392,6 +434,19 @@ export const AgentChat: React.FC<AgentChatProps> = ({
             >
               <Target style={{ width: '13px', height: '13px' }} />
               Goals ({goalSchedules.filter(g => g.status === 'ACTIVE' || g.status === 'PENDING_APPROVAL').length})
+            </button>
+            <button
+              onClick={() => { setShowActionLibrary(!showActionLibrary); setShowGoalLibrary(false); loadActionCards(); }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '6px',
+                padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
+                border: '1px solid rgba(16, 185, 129, 0.3)',
+                backgroundColor: showActionLibrary ? 'rgba(16, 185, 129, 0.15)' : 'rgba(16, 185, 129, 0.05)',
+                color: '#34d399', cursor: 'pointer', transition: 'all 0.2s',
+              }}
+            >
+              <Play style={{ width: '13px', height: '13px' }} />
+              Actions ({actionCards.filter(a => a.status === 'PENDING').length})
             </button>
           </div>
         </div>
@@ -721,6 +776,29 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                             )}
                           </div>
                         );
+                      } else if (prop.type === 'ACTION_PROPOSAL' && prop.card) {
+                        return (
+                          <div key={idx} style={{ padding: '18px', borderRadius: '14px', border: '1px solid rgba(16, 185, 129, 0.4)', backgroundColor: 'rgba(16, 185, 129, 0.05)', marginTop: '4px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                              <Play style={{ width: '18px', height: '18px', color: '#34d399' }} />
+                              <h4 style={{ margin: 0, fontSize: '15px', fontWeight: 700, color: '#ffffff' }}>Action Proposed</h4>
+                              <span style={{ marginLeft: 'auto', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', backgroundColor: (actionCards.find(a => a.id === prop.card.id)?.status || prop.card.status) === 'APPROVED' ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)', color: (actionCards.find(a => a.id === prop.card.id)?.status || prop.card.status) === 'APPROVED' ? '#34d399' : '#fbbf24', fontWeight: 700 }}>
+                                {actionCards.find(a => a.id === prop.card.id)?.status || prop.card.status}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: '14px', color: '#e5e7eb', marginBottom: '8px', fontWeight: 600 }}>
+                              {prop.card.action_type.replace(/_/g, ' ')}
+                            </div>
+                            <div style={{ fontSize: '13px', color: '#9ca3af', marginBottom: '14px', lineHeight: '1.5' }}>
+                              {prop.card.reasoning || prop.message || ''}
+                            </div>
+                            {(actionCards.find(a => a.id === prop.card.id)?.status || prop.card.status) === 'PENDING' && (
+                              <button onClick={() => handleApproveAction(prop.card.id)} disabled={executingActionId === prop.card.id} style={{ width: '100%', backgroundColor: '#10b981', color: '#fff', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: 700, fontSize: '13px', cursor: executingActionId === prop.card.id ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                                <CheckCircle2 style={{ width: '14px', height: '14px' }} /> {executingActionId === prop.card.id ? 'Executing...' : 'Approve & Execute Action'}
+                              </button>
+                            )}
+                          </div>
+                        );
                       } else if (prop.campaignName) {
                         return (
                           <div key={idx} className="glass-panel" style={{ padding: '20px', borderRadius: '14px', border: '1px solid rgba(6, 182, 212, 0.4)', backgroundColor: 'rgba(6, 182, 212, 0.05)', marginTop: '4px' }}>
@@ -792,7 +870,50 @@ export const AgentChat: React.FC<AgentChatProps> = ({
         </div>
 
         {/* Goal Library Drawer (slides in from right) */}
-        {showGoalLibrary && (
+        {showActionLibrary && (
+        <div style={{ width: '380px', backgroundColor: '#0c111d', borderLeft: '1px solid rgba(255,255,255,0.06)', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '20px 24px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <Play style={{ width: '18px', height: '18px', color: '#34d399' }} />
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: '#f3f4f6' }}>Chat Actions</h3>
+            </div>
+            <button onClick={() => setShowActionLibrary(false)} style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer' }}>
+              <X style={{ width: '18px', height: '18px' }} />
+            </button>
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
+            {actionCards.length === 0 ? (
+              <div style={{ textAlign: 'center', color: '#6b7280', fontSize: '13px', marginTop: '40px' }}>
+                No actions have been proposed in this chat session yet.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {actionCards.map(action => (
+                  <div key={action.id} style={{ padding: '16px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                      <span style={{ fontSize: '13px', fontWeight: 600, color: '#e5e7eb' }}>{action.action_type.replace(/_/g, ' ')}</span>
+                      <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '4px', backgroundColor: action.status === 'APPROVED' ? 'rgba(16,185,129,0.2)' : 'rgba(245,158,11,0.2)', color: action.status === 'APPROVED' ? '#34d399' : '#f59e0b', fontWeight: 600 }}>
+                        {action.status}
+                      </span>
+                    </div>
+                    <p style={{ margin: '0 0 12px 0', fontSize: '12px', color: '#9ca3af', lineHeight: '1.5' }}>{action.reasoning}</p>
+                    {action.status === 'PENDING' && (
+                      <button
+                        onClick={() => handleApproveAction(action.id)}
+                        disabled={executingActionId === action.id}
+                        style={{ width: '100%', backgroundColor: '#10b981', color: '#ffffff', border: 'none', padding: '8px', borderRadius: '6px', fontWeight: 600, fontSize: '12px', cursor: executingActionId === action.id ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                      >
+                        {executingActionId === action.id ? 'Executing...' : 'Approve Action'}
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {showGoalLibrary && (
           <div style={{
             position: 'absolute', right: 0, top: 0, bottom: 0, width: '360px',
             backgroundColor: '#0c111d', borderLeft: '1px solid rgba(255,255,255,0.08)',
