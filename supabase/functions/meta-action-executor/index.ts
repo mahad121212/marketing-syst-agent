@@ -233,27 +233,82 @@ serve(async (req) => {
     //   RENAME, CREATE_NEW, UPDATE_TARGETING, PAUSE_AD_SET, PAUSE_AD, etc.
     // We normalize these to figure out WHAT to do and WHICH level to target.
 
-    let metaId = ''
-    let level = '' 
+    // Multi-strategy Meta ID resolution:
+    // Strategy 1: Is targetId directly a numeric Meta ID? (e.g. "52586793602259")
+    if (targetId && /^\d+$/.test(targetId)) {
+      metaId = targetId
+      level = 'campaign'
+    }
 
-    // First try to resolve targetId across all 3 tables (campaigns, ad_sets, ads)
-    if (targetId) {
-      const { data: campaign } = await supabaseClient.from('campaigns').select('meta_id').eq('id', targetId).maybeSingle()
-      if (campaign?.meta_id) {
-        metaId = campaign.meta_id
-        level = 'campaign'
-      } else {
-        const { data: adSet } = await supabaseClient.from('ad_sets').select('meta_id').eq('id', targetId).maybeSingle()
-        if (adSet?.meta_id) {
-          metaId = adSet.meta_id
-          level = 'ad_set'
+    // Strategy 2: Look up by UUID or meta_id across campaigns, ad_sets, ads tables
+    if (!metaId && targetId) {
+      try {
+        const { data: campaign } = await supabaseClient.from('campaigns').select('id, meta_id, name').or(`id.eq.${targetId},meta_id.eq.${targetId}`).maybeSingle()
+        if (campaign?.meta_id) {
+          metaId = campaign.meta_id
+          level = 'campaign'
         } else {
-          const { data: ad } = await supabaseClient.from('ads').select('meta_id').eq('id', targetId).maybeSingle()
-          if (ad?.meta_id) {
-            metaId = ad.meta_id
-            level = 'ad'
+          const { data: adSet } = await supabaseClient.from('ad_sets').select('id, meta_id, name').or(`id.eq.${targetId},meta_id.eq.${targetId}`).maybeSingle()
+          if (adSet?.meta_id) {
+            metaId = adSet.meta_id
+            level = 'ad_set'
+          } else {
+            const { data: ad } = await supabaseClient.from('ads').select('id, meta_id, name').or(`id.eq.${targetId},meta_id.eq.${targetId}`).maybeSingle()
+            if (ad?.meta_id) {
+              metaId = ad.meta_id
+              level = 'ad'
+            }
           }
         }
+      } catch (_e) {
+        // In case targetId is not a valid UUID format for PostgreSQL id column
+      }
+    }
+
+    // Strategy 3: Check if targetId was an action_card ID
+    if (!metaId && targetId) {
+      try {
+        const { data: targetCard } = await supabaseClient.from('action_cards').select('proposed_changes').eq('id', targetId).maybeSingle()
+        if (targetCard?.proposed_changes?.name) {
+          const cardName = targetCard.proposed_changes.name
+          const { data: matchedCamp } = await supabaseClient.from('campaigns').select('meta_id').ilike('name', cardName).maybeSingle()
+          if (matchedCamp?.meta_id) {
+            metaId = matchedCamp.meta_id
+            level = 'campaign'
+          }
+        }
+      } catch (_e) {}
+    }
+
+    // Strategy 4: Look up by old_name or name in local campaigns table
+    const searchName = proposedChanges.old_name || proposedChanges.name
+    if (!metaId && searchName) {
+      const { data: campByName } = await supabaseClient.from('campaigns').select('meta_id').ilike('name', searchName).maybeSingle()
+      if (campByName?.meta_id) {
+        metaId = campByName.meta_id
+        level = 'campaign'
+      }
+    }
+
+    // Strategy 5: Query Meta Graph API directly to find matching campaign by name or ID
+    if (!metaId && (searchName || targetId)) {
+      try {
+        const metaFindUrl = `https://graph.facebook.com/v21.0/${cleanId}/campaigns?fields=id,name&access_token=${token}`
+        const metaFindRes = await fetch(metaFindUrl)
+        if (metaFindRes.ok) {
+          const metaFindData = await metaFindRes.json()
+          const list = metaFindData.data || []
+          const found = list.find((c: any) => 
+            (searchName && c.name?.toLowerCase().includes(searchName.toLowerCase())) ||
+            (targetId && c.id === targetId)
+          )
+          if (found?.id) {
+            metaId = found.id
+            level = 'campaign'
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to query Meta for matching campaign:', err)
       }
     }
 

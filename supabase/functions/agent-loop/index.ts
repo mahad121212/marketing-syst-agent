@@ -40,7 +40,7 @@ const AGENT_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          target_id: { type: 'string', description: 'The UUID of the campaign or ad set to adjust. If creating a NEW campaign, omit this or pass "NEW".' },
+          target_id: { type: 'string', description: 'The identifier (Meta ID like "52586793602259", UUID, or Campaign Name) of the entity to adjust.' },
           action_type: { type: 'string', enum: ['PAUSE', 'INCREASE_BUDGET', 'DECREASE_BUDGET', 'CHANGE_TARGETING', 'CREATE_NEW'], description: 'The type of adjustment.' },
           priority: { type: 'string', enum: ['LOW', 'HIGH', 'MANDATORY'], description: 'The priority of this action.' },
           proposed_changes: { type: 'object', description: 'JSON object detailing the exact changes.' },
