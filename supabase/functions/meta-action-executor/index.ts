@@ -235,39 +235,24 @@ serve(async (req) => {
 
     let metaId = ''
     let level = '' 
-    let internalTargetId = targetId
 
-    // Intelligently resolve the target entity whether the agent passed a UUID, Meta ID, or Name
+    // First try to resolve targetId across all 3 tables (campaigns, ad_sets, ads)
     if (targetId) {
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(targetId);
-      const isMetaId = /^\d+$/.test(targetId);
-      
-      const resolveTarget = async (table: string, levelName: string) => {
-        let query = supabaseClient.from(table).select('id, meta_id')
-        if (isUuid) {
-          query = query.eq('id', targetId)
-        } else if (isMetaId) {
-          query = query.eq('meta_id', targetId)
+      const { data: campaign } = await supabaseClient.from('campaigns').select('meta_id').eq('id', targetId).maybeSingle()
+      if (campaign?.meta_id) {
+        metaId = campaign.meta_id
+        level = 'campaign'
+      } else {
+        const { data: adSet } = await supabaseClient.from('ad_sets').select('meta_id').eq('id', targetId).maybeSingle()
+        if (adSet?.meta_id) {
+          metaId = adSet.meta_id
+          level = 'ad_set'
         } else {
-          // If the agent passed a name instead of an ID
-          query = query.eq('name', targetId)
-        }
-        
-        const { data } = await query.maybeSingle()
-        if (data) {
-          metaId = data.meta_id || (isMetaId ? targetId : '')
-          internalTargetId = data.id // Ensure internalTargetId is always the UUID for local DB updates
-          level = levelName
-          return true
-        }
-        return false
-      }
-
-      const foundCampaign = await resolveTarget('campaigns', 'campaign')
-      if (!foundCampaign) {
-        const foundAdSet = await resolveTarget('ad_sets', 'ad_set')
-        if (!foundAdSet) {
-          await resolveTarget('ads', 'ad')
+          const { data: ad } = await supabaseClient.from('ads').select('meta_id').eq('id', targetId).maybeSingle()
+          if (ad?.meta_id) {
+            metaId = ad.meta_id
+            level = 'ad'
+          }
         }
       }
     }
@@ -320,11 +305,11 @@ serve(async (req) => {
       if (!response.ok) throw new Error(`Meta API Write Error: ${data.error?.message || 'Unknown error'}`)
 
       // Sync local DB
-      if (internalTargetId && Object.keys(localDbPayload).length > 0) {
+      if (targetId && Object.keys(localDbPayload).length > 0) {
         const localTableMap: Record<string, string> = { 'campaign': 'campaigns', 'ad_set': 'ad_sets', 'ad': 'ads' }
         const tableName = localTableMap[level]
         if (tableName) {
-          const { error: dbUpdateErr } = await supabaseClient.from(tableName).update(localDbPayload).eq('id', internalTargetId)
+          const { error: dbUpdateErr } = await supabaseClient.from(tableName).update(localDbPayload).eq('id', targetId)
           if (dbUpdateErr) console.warn(`Meta updated but failed to update local DB:`, dbUpdateErr.message)
         }
       }
@@ -343,10 +328,10 @@ serve(async (req) => {
 
     // If we have local-only changes (no Meta ID, or action doesn't map to Meta API),
     // still sync locally and mark card as approved
-    if (internalTargetId && Object.keys(localDbPayload).length > 0) {
+    if (targetId && Object.keys(localDbPayload).length > 0) {
       // Try to update local DB even without Meta
       for (const table of ['campaigns', 'ad_sets', 'ads']) {
-        const { error } = await supabaseClient.from(table).update(localDbPayload).eq('id', internalTargetId)
+        const { error } = await supabaseClient.from(table).update(localDbPayload).eq('id', targetId)
         if (!error) {
           level = table === 'campaigns' ? 'campaign' : table === 'ad_sets' ? 'ad_set' : 'ad'
           break
@@ -359,7 +344,7 @@ serve(async (req) => {
 
     await supabaseClient.from('agent_memory').insert({
       user_id: user.id,
-      campaign_id: internalTargetId,
+      campaign_id: targetId,
       decision_made: `EXECUTED ACTION: ${actionType}`,
       reasoning_snapshot: metaId 
         ? `Action executed on Meta (ID: ${metaId}) but had no changes to push.`
