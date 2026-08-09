@@ -1064,7 +1064,7 @@ async function executeTool(
       
       var cardRes = await supabaseClient.from('action_cards').insert({
         user_id: userId,
-        session_id: session_id,
+        session_id: sessionId,
         campaign_id: campId,
         priority: toolArgs.priority,
         action_type: toolArgs.action_type,
@@ -1143,7 +1143,7 @@ async function executeTool(
     case 'create_campaign': {
       const cardRes = await supabaseClient.from('action_cards').insert({
         user_id: userId,
-        session_id: session_id,
+        session_id: sessionId,
         campaign_id: null,
         priority: 'HIGH',
         action_type: 'CREATE_CAMPAIGN',
@@ -1171,7 +1171,7 @@ async function executeTool(
     case 'create_ad_set': {
       const cardRes = await supabaseClient.from('action_cards').insert({
         user_id: userId,
-        session_id: session_id,
+        session_id: sessionId,
         campaign_id: toolArgs.campaign_id,
         priority: 'HIGH',
         action_type: 'CREATE_AD_SET',
@@ -1199,7 +1199,7 @@ async function executeTool(
     case 'create_ad': {
       const cardRes = await supabaseClient.from('action_cards').insert({
         user_id: userId,
-        session_id: session_id,
+        session_id: sessionId,
         campaign_id: null, // No direct campaign link for ad creation at this level to avoid FK constraint errors, parent info is in proposed_changes
         priority: 'HIGH',
         action_type: 'CREATE_AD',
