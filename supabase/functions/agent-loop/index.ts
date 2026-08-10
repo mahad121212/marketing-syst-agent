@@ -36,17 +36,17 @@ const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'propose_action_card',
-      description: 'Proposes an adjustment to a campaign, ad set, or ad. This creates an Action Card in the user\'s Action Center. Use this to DECIDE and ACT. IMPORTANT: This tool ONLY creates a pending draft proposal. It does NOT create the campaign on Meta, and you will NOT receive a Meta Campaign ID back. Do NOT try to call create_ad_set immediately after this tool. You MUST assign a priority: LOW, HIGH, or MANDATORY.',
+      description: 'This is your ONLY tool for modifying existing campaigns, ad sets, or ads. Use it to rename, pause, resume/activate, change budget, change targeting, or any other modification. This creates an Action Card for user approval. There are NO other modification tools — do NOT invent tool names like update_campaign_name or change_status. ALWAYS pass the target_id (Meta ID) so the executor knows which entity to modify. You MUST assign a priority: LOW, HIGH, or MANDATORY.',
       parameters: {
         type: 'object',
         properties: {
-          target_id: { type: 'string', description: 'The identifier (Meta ID like "52586793602259", UUID, or Campaign Name) of the entity to adjust.' },
-          action_type: { type: 'string', enum: ['PAUSE', 'INCREASE_BUDGET', 'DECREASE_BUDGET', 'CHANGE_TARGETING', 'CREATE_NEW'], description: 'The type of adjustment.' },
-          priority: { type: 'string', enum: ['LOW', 'HIGH', 'MANDATORY'], description: 'The priority of this action.' },
-          proposed_changes: { type: 'object', description: 'JSON object detailing the exact changes.' },
+          target_id: { type: 'string', description: 'REQUIRED. The Meta ID (numeric like "52586793602259") of the campaign, ad set, or ad to modify. Get this from get_campaign_hierarchy.' },
+          action_type: { type: 'string', enum: ['PAUSE', 'RESUME', 'RENAME', 'INCREASE_BUDGET', 'DECREASE_BUDGET', 'CHANGE_TARGETING', 'CREATE_NEW'], description: 'The type of adjustment. Use PAUSE to pause, RESUME to activate/unpause, RENAME to change name, INCREASE_BUDGET/DECREASE_BUDGET for budget, CHANGE_TARGETING for targeting.' },
+          priority: { type: 'string', enum: ['LOW', 'HIGH', 'MANDATORY'], description: 'The priority of this action. Must be LOW, HIGH, or MANDATORY.' },
+          proposed_changes: { type: 'object', description: 'JSON object with exact changes. For renames: {"new_name": "..."}. For status: {"status": "ACTIVE" or "PAUSED"}. For budget: {"daily_budget": 1500}.' },
           reasoning: { type: 'string', description: 'A detailed explanation of WHY this adjustment is recommended.' }
         },
-        required: ['action_type', 'priority', 'proposed_changes', 'reasoning']
+        required: ['target_id', 'action_type', 'priority', 'proposed_changes', 'reasoning']
       }
     }
   },
@@ -851,7 +851,18 @@ You have dedicated tools to create new entities or propose modifications:
 - \`create_campaign\` — Creates a new campaign (queued for user approval)
 - \`create_ad_set\` — Creates a new ad set (queued for user approval)
 - \`create_ad\` — Creates a new ad (queued for user approval)
-- \`propose_action_card\` — Proposes a modification to an existing entity (queued for user approval)
+- \`propose_action_card\` — Your ONLY tool for ALL modifications to existing entities
+
+### CRITICAL: propose_action_card is your ONLY modification tool
+There are NO other modification tools. Do NOT invent or call tools like \`update_campaign_name\`, \`change_campaign_status\`, \`rename_campaign\`, or \`update_status\`. They DO NOT EXIST.
+Use \`propose_action_card\` for:
+- **Renaming**: action_type=RENAME, proposed_changes={new_name: "..."}
+- **Pausing**: action_type=PAUSE, proposed_changes={status: "PAUSED"}
+- **Activating/Resuming**: action_type=RESUME, proposed_changes={status: "ACTIVE"}
+- **Budget changes**: action_type=INCREASE_BUDGET or DECREASE_BUDGET, proposed_changes={daily_budget: 1500}
+- **Targeting changes**: action_type=CHANGE_TARGETING, proposed_changes={...}
+
+ALWAYS pass the \`target_id\` parameter with the numeric Meta ID (e.g., "52586793602259") from \`get_campaign_hierarchy\`. Without target_id, the executor cannot find the campaign on Meta.
 
 When you call any of these tools, the system generates an "Action Card" in the user's UI. The user must click "Approve" before it executes on Meta.
 
@@ -861,6 +872,7 @@ When you call any of these tools, the system generates an "Action Card" in the u
 3. **After calling the tool, guide the user to approve.** Tell them to click "Approve" on the Action Card that appeared in the chat. Do NOT call the same tool again when they reply saying "yes" or "approved" — they are confirming via the UI button, not asking you to re-create.
 4. **New requests = new tool calls.** If the user asks you to create a DIFFERENT campaign (new name, new purpose), that is a brand new request and you SHOULD call the tool again. Only avoid re-calling for the SAME entity.
 5. Always provide a full campaign structure when asked: campaign -> at least one ad set -> at least one ad.
+6. **When the user gives a direct command like "rename X to Y" or "activate these campaigns", execute it immediately.** Do NOT lecture them about strategy or refuse the request. Call \`propose_action_card\` with the correct parameters and let them approve. You can add strategic advice AFTER executing their request.
 
 ## Holistic Strategic Budget Reasoning (CRITICAL)
 You are a SENIOR MEDIA BUYER & GROWTH STRATEGIST, not a template robot.
@@ -1064,16 +1076,22 @@ async function executeTool(
     }
 
     case 'propose_action_card': {
-      var campId = toolArgs.target_id;
-      if (campId === 'NEW' || campId === '' || !campId) {
+      var campId = toolArgs.target_id || toolArgs.proposed_changes?.campaign_id || toolArgs.proposed_changes?.target_id || null;
+      if (campId === 'NEW' || campId === '') {
         campId = null;
       }
+
+      // Validate priority — only allow LOW, HIGH, MANDATORY
+      const validPriorities = ['LOW', 'HIGH', 'MANDATORY'];
+      var safePriority = validPriorities.includes((toolArgs.priority || '').toUpperCase()) 
+        ? toolArgs.priority.toUpperCase() 
+        : 'HIGH';
       
       var cardRes = await supabaseClient.from('action_cards').insert({
         user_id: userId,
         session_id: sessionId,
         campaign_id: campId,
-        priority: toolArgs.priority,
+        priority: safePriority,
         action_type: toolArgs.action_type,
         proposed_changes: toolArgs.proposed_changes,
         reasoning: toolArgs.reasoning,
@@ -1092,7 +1110,7 @@ async function executeTool(
       return JSON.stringify({
         type: 'ACTION_PROPOSAL',
         card: cardRes.data,
-        message: 'Action Card generated with ' + toolArgs.priority + ' priority and sent to Action Center.'
+        message: 'Action Card generated with ' + safePriority + ' priority and sent to Action Center.'
       })
     }
 

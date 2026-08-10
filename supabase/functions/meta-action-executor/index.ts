@@ -346,17 +346,19 @@ serve(async (req) => {
     const updateBody: any = { access_token: token }
     const localDbPayload: any = {}
 
-    // Normalize action types — the agent may send PAUSE_CAMPAIGN, PAUSE_AD_SET, PAUSE, etc.
+    // Normalize action types — the agent may send PAUSE_CAMPAIGN, CHANGE_STATUS, UPDATE_BUDGET, RENAME, etc.
     const normalizedAction = actionType
       .replace(/_CAMPAIGN/g, '')
       .replace(/_AD_SET/g, '')
       .replace(/_AD$/g, '')
+      .replace(/^CHANGE_/, '')
+      .replace(/^UPDATE_/, '')
 
-    // 1. Status changes (PAUSE, RESUME, ACTIVATE)
+    // 1. Status changes (PAUSE, RESUME, ACTIVATE, STATUS with proposed_changes)
     if (normalizedAction === 'PAUSE' || proposedChanges.status === 'PAUSED') {
       updateBody.status = 'PAUSED'
       localDbPayload.status = 'PAUSED'
-    } else if (normalizedAction === 'RESUME' || normalizedAction === 'ACTIVATE' || proposedChanges.status === 'ACTIVE') {
+    } else if (normalizedAction === 'RESUME' || normalizedAction === 'ACTIVATE' || normalizedAction === 'STATUS' || proposedChanges.status === 'ACTIVE') {
       updateBody.status = 'ACTIVE'
       localDbPayload.status = 'ACTIVE'
     }
