@@ -1190,7 +1190,7 @@ async function executeTool(
       return JSON.stringify({
         type: 'ACTION_PROPOSAL',
         card: cardRes.data,
-        message: `Action card created for campaign "${toolArgs.name}". Waiting for user approval before pushing to Meta.`
+        message: `Campaign action card created for "${toolArgs.name}". IMPORTANT: Now you MUST also call create_ad_set and create_ad to build the complete hierarchy. Do NOT stop here.`
       })
     }
 
@@ -1218,7 +1218,7 @@ async function executeTool(
       return JSON.stringify({
         type: 'ACTION_PROPOSAL',
         card: cardRes.data,
-        message: `Action card created for ad set "${toolArgs.name}". Waiting for user approval before pushing to Meta.`
+        message: `Ad set action card created for "${toolArgs.name}". IMPORTANT: Now you MUST also call create_ad to build at least one ad under this ad set. Do NOT stop here.`
       })
     }
 
