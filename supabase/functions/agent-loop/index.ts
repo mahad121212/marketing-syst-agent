@@ -1783,7 +1783,7 @@ serve(async (req) => {
               } catch {}
 
               if (['create_campaign', 'create_ad_set', 'propose_action_card'].includes(toolName)) {
-                executedWorkerActionTools.add(toolName)
+                executedWorkerTools.add(toolName)
               }
 
               logStageAudit(thinkingSteps, {
