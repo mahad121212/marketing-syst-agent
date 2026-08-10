@@ -152,12 +152,52 @@ serve(async (req) => {
     }
 
     if (actionType === 'CREATE_AD_SET') {
-      const { data: campaign } = await supabaseClient.from('campaigns').select('meta_id').eq('id', proposedChanges.campaign_id).single()
-      if (!campaign?.meta_id) throw new Error('Parent campaign does not have a real Meta ID.')
+      // Multi-strategy resolution: the agent may pass a UUID, Meta ID, campaign name, or action card ID
+      const campRef = proposedChanges.campaign_id || targetId
+      let parentMetaId = ''
+      let parentLocalId = ''
+
+      if (campRef) {
+        // Strategy 1: Direct UUID lookup
+        const { data: byId } = await supabaseClient.from('campaigns').select('id, meta_id').eq('id', campRef).maybeSingle()
+        if (byId?.meta_id) {
+          parentMetaId = byId.meta_id
+          parentLocalId = byId.id
+        }
+
+        // Strategy 2: Meta ID lookup
+        if (!parentMetaId) {
+          const { data: byMetaId } = await supabaseClient.from('campaigns').select('id, meta_id').eq('meta_id', campRef).maybeSingle()
+          if (byMetaId?.meta_id) {
+            parentMetaId = byMetaId.meta_id
+            parentLocalId = byMetaId.id
+          }
+        }
+
+        // Strategy 3: Name lookup
+        if (!parentMetaId) {
+          const { data: byName } = await supabaseClient.from('campaigns').select('id, meta_id').ilike('name', campRef).maybeSingle()
+          if (byName?.meta_id) {
+            parentMetaId = byName.meta_id
+            parentLocalId = byName.id
+          }
+        }
+      }
+
+      // Strategy 4: Find most recently created campaign for this user
+      if (!parentMetaId) {
+        const { data: recent } = await supabaseClient.from('campaigns').select('id, meta_id').eq('user_id', user.id).not('meta_id', 'is', null).order('created_at', { ascending: false }).limit(1).maybeSingle()
+        if (recent?.meta_id) {
+          parentMetaId = recent.meta_id
+          parentLocalId = recent.id
+        }
+      }
+
+      if (!parentMetaId) throw new Error('Parent campaign does not have a real Meta ID. Please approve the campaign Action Card first.')
 
       const metaUrl = `https://graph.facebook.com/v21.0/${cleanId}/adsets`
       const payload: any = {
-        campaign_id: campaign.meta_id,
+        campaign_id: parentMetaId,
         name: proposedChanges.name,
         status: 'ACTIVE',
         billing_event: 'IMPRESSIONS',
@@ -167,6 +207,17 @@ serve(async (req) => {
       }
       if (proposedChanges.bid_amount) payload.bid_amount = Math.round(proposedChanges.bid_amount * 100)
 
+      // Apply targeting from proposed_changes if provided
+      if (proposedChanges.targeting) {
+        if (proposedChanges.targeting.locations) {
+          payload.targeting.geo_locations.countries = Array.isArray(proposedChanges.targeting.locations) ? proposedChanges.targeting.locations : ['PK']
+        }
+        if (proposedChanges.targeting.age_range) {
+          payload.targeting.age_min = proposedChanges.targeting.age_range.min || proposedChanges.targeting.age_range[0] || 18
+          payload.targeting.age_max = proposedChanges.targeting.age_range.max || proposedChanges.targeting.age_range[1] || 65
+        }
+      }
+
       const res = await fetch(metaUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
       const metaData = await res.json()
       if (!res.ok) throw new Error(`Meta API Error: ${JSON.stringify(metaData.error || metaData)}`)
@@ -175,7 +226,7 @@ serve(async (req) => {
 
       const newAdSet = await supabaseClient.from('ad_sets').insert({
         user_id: user.id,
-        campaign_id: proposedChanges.campaign_id,
+        campaign_id: parentLocalId,
         meta_id: metaAdSetId,
         name: proposedChanges.name,
         targeting: proposedChanges.targeting || {},
@@ -189,22 +240,62 @@ serve(async (req) => {
 
       await supabaseClient.from('agent_memory').insert({
         user_id: user.id,
-        campaign_id: proposedChanges.campaign_id,
+        campaign_id: parentLocalId,
         decision_made: 'EXECUTED ACTION: CREATE_AD_SET',
-        reasoning_snapshot: `Created ad set on Meta (ID: ${metaAdSetId})`
+        reasoning_snapshot: `Created ad set on Meta (ID: ${metaAdSetId}) under campaign ${parentMetaId}`
       })
 
       return new Response(JSON.stringify({ success: true, meta_id: metaAdSetId, level: 'ad_set' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
     if (actionType === 'CREATE_AD') {
-      const { data: adSet } = await supabaseClient.from('ad_sets').select('meta_id').eq('id', proposedChanges.ad_set_id).single()
-      if (!adSet?.meta_id) throw new Error('Parent ad set does not have a real Meta ID.')
+      // Multi-strategy resolution: the agent may pass a UUID, Meta ID, or ad set name
+      const adSetRef = proposedChanges.ad_set_id || targetId
+      let parentAdSetMetaId = ''
+      let parentAdSetLocalId = ''
+
+      if (adSetRef) {
+        // Strategy 1: Direct UUID lookup
+        const { data: byId } = await supabaseClient.from('ad_sets').select('id, meta_id').eq('id', adSetRef).maybeSingle()
+        if (byId?.meta_id) {
+          parentAdSetMetaId = byId.meta_id
+          parentAdSetLocalId = byId.id
+        }
+
+        // Strategy 2: Meta ID lookup
+        if (!parentAdSetMetaId) {
+          const { data: byMetaId } = await supabaseClient.from('ad_sets').select('id, meta_id').eq('meta_id', adSetRef).maybeSingle()
+          if (byMetaId?.meta_id) {
+            parentAdSetMetaId = byMetaId.meta_id
+            parentAdSetLocalId = byMetaId.id
+          }
+        }
+
+        // Strategy 3: Name lookup
+        if (!parentAdSetMetaId) {
+          const { data: byName } = await supabaseClient.from('ad_sets').select('id, meta_id').ilike('name', adSetRef).maybeSingle()
+          if (byName?.meta_id) {
+            parentAdSetMetaId = byName.meta_id
+            parentAdSetLocalId = byName.id
+          }
+        }
+      }
+
+      // Strategy 4: Find most recently created ad set for this user
+      if (!parentAdSetMetaId) {
+        const { data: recent } = await supabaseClient.from('ad_sets').select('id, meta_id').eq('user_id', user.id).not('meta_id', 'is', null).order('created_at', { ascending: false }).limit(1).maybeSingle()
+        if (recent?.meta_id) {
+          parentAdSetMetaId = recent.meta_id
+          parentAdSetLocalId = recent.id
+        }
+      }
+
+      if (!parentAdSetMetaId) throw new Error('Parent ad set does not have a real Meta ID. Please approve the Ad Set Action Card first.')
 
       const pagesRes = await fetch(`https://graph.facebook.com/v21.0/me/accounts?access_token=${token}`)
       const pagesData = await pagesRes.json()
       const pageId = pagesData.data?.[0]?.id
-      if (!pageId) throw new Error('No Facebook Page found connected to this token.')
+      if (!pageId) throw new Error('No Facebook Page found connected to this token. A Facebook Page is required to create ads.')
 
       const creativeRes = await fetch(`https://graph.facebook.com/v21.0/${cleanId}/adcreatives`, {
         method: 'POST',
@@ -222,7 +313,7 @@ serve(async (req) => {
       const adRes = await fetch(`https://graph.facebook.com/v21.0/${cleanId}/ads`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ adset_id: adSet.meta_id, creative: { creative_id: creativeId }, name: proposedChanges.name, status: 'ACTIVE', access_token: token })
+        body: JSON.stringify({ adset_id: parentAdSetMetaId, creative: { creative_id: creativeId }, name: proposedChanges.name, status: 'ACTIVE', access_token: token })
       })
       const adData = await adRes.json()
       if (!adRes.ok) throw new Error(`Meta Ad Error: ${JSON.stringify(adData.error || adData)}`)
@@ -230,7 +321,7 @@ serve(async (req) => {
 
       const newAd = await supabaseClient.from('ads').insert({
         user_id: user.id,
-        ad_set_id: proposedChanges.ad_set_id,
+        ad_set_id: parentAdSetLocalId,
         meta_id: metaAdId,
         name: proposedChanges.name,
         creative_url: proposedChanges.creative_url || '',
@@ -246,9 +337,9 @@ serve(async (req) => {
 
       await supabaseClient.from('agent_memory').insert({
         user_id: user.id,
-        campaign_id: proposedChanges.ad_set_id, // ad set id for tracking reference
+        campaign_id: parentAdSetLocalId,
         decision_made: 'EXECUTED ACTION: CREATE_AD',
-        reasoning_snapshot: `Created ad on Meta (ID: ${metaAdId})`
+        reasoning_snapshot: `Created ad on Meta (ID: ${metaAdId}) under ad set ${parentAdSetMetaId}`
       })
 
       return new Response(JSON.stringify({ success: true, meta_id: metaAdId, level: 'ad' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
