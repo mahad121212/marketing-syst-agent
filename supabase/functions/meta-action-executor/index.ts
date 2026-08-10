@@ -94,38 +94,37 @@ serve(async (req) => {
 
     // --- CREATION ACTIONS ---
 
-    if (actionType === 'CREATE_CAMPAIGN') {
+    if (actionType === 'CREATE_CAMPAIGN' || actionType === 'CREATE_CAMPAIGN_STRUCTURE') {
       const objMap: Record<string, string> = {
         'CONVERSIONS': 'OUTCOME_SALES',
         'SALES': 'OUTCOME_SALES',
-        'LEADS': 'OUTCOME_LEADS',
         'TRAFFIC': 'OUTCOME_TRAFFIC',
-        'AWARENESS': 'OUTCOME_AWARENESS',
         'REACH': 'OUTCOME_AWARENESS',
-        'ENGAGEMENT': 'OUTCOME_ENGAGEMENT'
+        'AWARENESS': 'OUTCOME_AWARENESS',
+        'ENGAGEMENT': 'OUTCOME_ENGAGEMENT',
+        'LEADS': 'OUTCOME_LEADS',
       }
       const mappedObjective = objMap[(proposedChanges.objective || 'CONVERSIONS').toUpperCase()] || 'OUTCOME_SALES'
-      const budgetInCents = Math.round((proposedChanges.daily_budget || 50) * 100)
 
+      // Step 1: Create Campaign on Meta
       const metaUrl = `https://graph.facebook.com/v21.0/${cleanId}/campaigns`
-      const res = await fetch(metaUrl, {
+      const budget = proposedChanges.daily_budget ? Math.round(parseFloat(proposedChanges.daily_budget) * 100) : 150000
+      const campaignRes = await fetch(metaUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: proposedChanges.name,
           objective: mappedObjective,
           status: 'PAUSED',
-          daily_budget: budgetInCents,
-          bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
-          special_ad_categories: ['NONE'],
+          special_ad_categories: [],
+          daily_budget: budget,
           access_token: token
         })
       })
+      const campaignData = await campaignRes.json()
+      if (!campaignRes.ok) throw new Error(`Meta Campaign Error: ${JSON.stringify(campaignData.error || campaignData)}`)
 
-      const metaData = await res.json()
-      if (!res.ok) throw new Error(`Meta API Error: ${JSON.stringify(metaData.error || metaData)}`)
-
-      const metaCampaignId = metaData.id
+      const metaCampaignId = campaignData.id
 
       const newCampaign = await supabaseClient.from('campaigns').insert({
         user_id: user.id,
@@ -139,16 +138,133 @@ serve(async (req) => {
 
       if (newCampaign.error) throw new Error(newCampaign.error.message)
 
+      const results: any = { campaign: { meta_id: metaCampaignId, name: proposedChanges.name }, ad_sets: [] }
+
+      // Step 2: Create Ad Sets (if any)
+      const adSets = proposedChanges.ad_sets || []
+      for (const adSetDef of adSets) {
+        try {
+          const targeting: any = { geo_locations: { countries: ['PK'] }, age_min: 18, age_max: 65 }
+          if (adSetDef.targeting) {
+            if (adSetDef.targeting.locations) {
+              const locs = Array.isArray(adSetDef.targeting.locations) ? adSetDef.targeting.locations : ['PK']
+              targeting.geo_locations.countries = locs.map((l: string) => l.length === 2 ? l : 'PK')
+            }
+            if (adSetDef.targeting.age_range) {
+              targeting.age_min = adSetDef.targeting.age_range.min || adSetDef.targeting.age_range[0] || 18
+              targeting.age_max = adSetDef.targeting.age_range.max || adSetDef.targeting.age_range[1] || 65
+            }
+          }
+
+          const adSetRes = await fetch(`https://graph.facebook.com/v21.0/${cleanId}/adsets`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              campaign_id: metaCampaignId,
+              name: adSetDef.name,
+              status: 'PAUSED',
+              billing_event: 'IMPRESSIONS',
+              optimization_goal: 'LINK_CLICKS',
+              targeting,
+              access_token: token
+            })
+          })
+          const adSetData = await adSetRes.json()
+          if (!adSetRes.ok) {
+            console.warn(`Ad Set creation failed: ${JSON.stringify(adSetData.error || adSetData)}`)
+            results.ad_sets.push({ name: adSetDef.name, error: adSetData.error?.message || 'Failed' })
+            continue
+          }
+
+          const metaAdSetId = adSetData.id
+
+          await supabaseClient.from('ad_sets').insert({
+            user_id: user.id,
+            campaign_id: newCampaign.data.id,
+            meta_id: metaAdSetId,
+            name: adSetDef.name,
+            targeting: adSetDef.targeting || {},
+            status: 'PAUSED',
+            performance_metrics: { spend: 0, impressions: 0, ctr: 0, cpc: 0 }
+          })
+
+          const adSetResult: any = { name: adSetDef.name, meta_id: metaAdSetId, ads: [] }
+
+          // Step 3: Create Ads under this Ad Set (if any)
+          const ads = adSetDef.ads || []
+          for (const adDef of ads) {
+            try {
+              // Get Facebook Page
+              const pagesRes = await fetch(`https://graph.facebook.com/v21.0/me/accounts?access_token=${token}`)
+              const pagesData = await pagesRes.json()
+              const pageId = pagesData.data?.[0]?.id
+              if (!pageId) {
+                adSetResult.ads.push({ name: adDef.name, error: 'No Facebook Page connected to this token' })
+                continue
+              }
+
+              // Create Ad Creative
+              const creativeRes = await fetch(`https://graph.facebook.com/v21.0/${cleanId}/adcreatives`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  name: `Creative for ${adDef.name}`,
+                  object_story_spec: { page_id: pageId, link_data: { message: adDef.copy, link: 'https://metaagent.ai', name: adDef.name } },
+                  access_token: token
+                })
+              })
+              const creativeData = await creativeRes.json()
+              if (!creativeRes.ok) {
+                adSetResult.ads.push({ name: adDef.name, error: `Creative failed: ${creativeData.error?.message || 'Unknown'}` })
+                continue
+              }
+
+              // Create Ad
+              const adRes = await fetch(`https://graph.facebook.com/v21.0/${cleanId}/ads`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ adset_id: metaAdSetId, creative: { creative_id: creativeData.id }, name: adDef.name, status: 'PAUSED', access_token: token })
+              })
+              const adData = await adRes.json()
+              if (!adRes.ok) {
+                adSetResult.ads.push({ name: adDef.name, error: `Ad failed: ${adData.error?.message || 'Unknown'}` })
+                continue
+              }
+
+              await supabaseClient.from('ads').insert({
+                user_id: user.id,
+                ad_set_id: metaAdSetId,
+                meta_id: adData.id,
+                name: adDef.name,
+                creative_url: adDef.creative_url || '',
+                copy: adDef.copy || '',
+                cta: adDef.cta || 'SHOP_NOW',
+                status: 'PAUSED',
+                performance_metrics: { spend: 0, impressions: 0, ctr: 0, cpc: 0 }
+              })
+
+              adSetResult.ads.push({ name: adDef.name, meta_id: adData.id })
+            } catch (adErr: any) {
+              adSetResult.ads.push({ name: adDef.name, error: adErr.message })
+            }
+          }
+
+          results.ad_sets.push(adSetResult)
+        } catch (asErr: any) {
+          results.ad_sets.push({ name: adSetDef.name, error: asErr.message })
+        }
+      }
+
       await supabaseClient.from('action_cards').update({ status: 'APPROVED', resolved_at: new Date().toISOString() }).eq('id', action_card_id)
 
       await supabaseClient.from('agent_memory').insert({
         user_id: user.id,
         campaign_id: newCampaign.data.id,
-        decision_made: 'EXECUTED ACTION: CREATE_CAMPAIGN',
-        reasoning_snapshot: `Created campaign on Meta (ID: ${metaCampaignId})`
+        decision_made: 'EXECUTED ACTION: CREATE_CAMPAIGN_STRUCTURE',
+        reasoning_snapshot: `Created full structure on Meta: Campaign ${metaCampaignId}, ${results.ad_sets.length} ad sets, ${results.ad_sets.reduce((s: number, a: any) => s + (a.ads?.length || 0), 0)} ads`
       })
 
-      return new Response(JSON.stringify({ success: true, meta_id: metaCampaignId, level: 'campaign' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+      return new Response(JSON.stringify({ success: true, meta_id: metaCampaignId, level: 'campaign_structure', results }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
     if (actionType === 'CREATE_AD_SET') {

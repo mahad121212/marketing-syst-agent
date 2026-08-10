@@ -109,50 +109,42 @@ const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'create_campaign',
-      description: 'Creates a brand new campaign in the ad account. Use this when the user asks to create a new campaign, or when you identify a strategic need for one. The campaign starts in PAUSED status so the user can review it.',
+      description: 'Creates a COMPLETE campaign structure: Campaign + Ad Sets + Ads — all in ONE action card. The user approves once, and the system creates all levels sequentially on Meta. You MUST include at least one ad_set with at least one ad inside it. Do NOT call create_ad_set or create_ad separately — they do not exist as separate tools.',
       parameters: {
         type: 'object',
         properties: {
           name: { type: 'string', description: 'Campaign name, e.g. "Summer Sale - Conversions"' },
           daily_budget: { type: 'number', description: 'Daily budget in the account currency.' },
-          targeting: { type: 'object', description: 'Targeting config: { age_range, gender, interests, locations, custom_audiences }' },
-          objective: { type: 'string', description: 'Campaign objective, e.g. CONVERSIONS, TRAFFIC, REACH, AWARENESS' }
+          targeting: { type: 'object', description: 'Default targeting config: { age_range: {min, max}, locations: ["PK"], gender: "all" }' },
+          objective: { type: 'string', description: 'Campaign objective: CONVERSIONS, TRAFFIC, REACH, AWARENESS' },
+          ad_sets: {
+            type: 'array',
+            description: 'REQUIRED. Array of ad sets to create under this campaign.',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string', description: 'Ad set name, e.g. "Broad_PK_18-45"' },
+                targeting: { type: 'object', description: 'Targeting for this ad set: { age_range: {min, max}, locations: ["PK"] }' },
+                ads: {
+                  type: 'array',
+                  description: 'REQUIRED. Array of ads to create under this ad set.',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      name: { type: 'string', description: 'Ad name' },
+                      copy: { type: 'string', description: 'Ad primary text / copy' },
+                      cta: { type: 'string', description: 'Call to action: SHOP_NOW, LEARN_MORE, SIGN_UP, SEND_MESSAGE' },
+                      creative_url: { type: 'string', description: 'Optional URL to creative asset' }
+                    },
+                    required: ['name', 'copy']
+                  }
+                }
+              },
+              required: ['name', 'ads']
+            }
+          }
         },
-        required: ['name', 'daily_budget']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'create_ad_set',
-      description: 'Creates a new ad set under an existing campaign. Use this to segment audiences or test different targeting within a campaign.',
-      parameters: {
-        type: 'object',
-        properties: {
-          campaign_id: { type: 'string', description: 'The UUID of the parent campaign.' },
-          name: { type: 'string', description: 'Ad set name, e.g. "Males 25-34 Interest Health"' },
-          targeting: { type: 'object', description: 'Targeting config for this ad set: { age_range, gender, interests, locations }' }
-        },
-        required: ['campaign_id', 'name']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'create_ad',
-      description: 'Creates a new ad under an existing ad set. Use this to test different creatives, copy, or CTAs within an ad set.',
-      parameters: {
-        type: 'object',
-        properties: {
-          ad_set_id: { type: 'string', description: 'The UUID of the parent ad set.' },
-          name: { type: 'string', description: 'Ad name, e.g. "Carousel - Summer Promo v1"' },
-          copy: { type: 'string', description: 'The ad copy / primary text.' },
-          cta: { type: 'string', description: 'Call to action, e.g. SHOP_NOW, LEARN_MORE, SIGN_UP' },
-          creative_url: { type: 'string', description: 'URL to the creative image or video (optional).' }
-        },
-        required: ['ad_set_id', 'name', 'copy']
+        required: ['name', 'daily_budget', 'ad_sets']
       }
     }
   }
@@ -162,7 +154,7 @@ const AGENT_TOOLS = [
 // ACTION TOOLS FOR STAGE 10 WORKER (Excludes Read-Only Tools)
 // ============================================================
 const ACTION_TOOLS = AGENT_TOOLS.filter(t => 
-  ['create_campaign', 'create_ad_set', 'create_ad', 'propose_action_card', 'schedule_monitoring_review', 'set_goal_schedule', 'report_no_action'].includes(t.function.name)
+  ['create_campaign', 'propose_action_card', 'schedule_monitoring_review', 'set_goal_schedule', 'report_no_action'].includes(t.function.name)
 )
 
 function logStageAudit(
@@ -871,9 +863,9 @@ When you call any of these tools, the system generates an "Action Card" in the u
 2. **Each tool call = one Action Card.** Calling create_campaign twice creates TWO separate campaigns. Only call it once per entity you want to create.
 3. **After calling the tool, guide the user to approve.** Tell them to click "Approve" on the Action Card that appeared in the chat. Do NOT call the same tool again when they reply saying "yes" or "approved" — they are confirming via the UI button, not asking you to re-create.
 4. **New requests = new tool calls.** If the user asks you to create a DIFFERENT campaign (new name, new purpose), that is a brand new request and you SHOULD call the tool again. Only avoid re-calling for the SAME entity.
-5. **ALWAYS create the full campaign hierarchy using tools.** When creating a campaign, you MUST also call \`create_ad_set\` and \`create_ad\` to build the complete Campaign → Ad Set → Ad structure. Do NOT just describe the ad set and ad in text — actually call the tools. The user expects to see 3 action cards: one for the campaign, one for the ad set, and one for the ad.
+5. **ALWAYS include the full hierarchy in create_campaign.** When creating a campaign, you MUST include the \`ad_sets\` array with at least one ad set, and each ad set MUST include an \`ads\` array with at least one ad. The create_campaign tool creates the ENTIRE structure (Campaign → Ad Sets → Ads) in ONE action card. The user approves once, and all levels are created sequentially on Meta. There are NO separate create_ad_set or create_ad tools.
 6. **When the user gives a direct command like "rename X to Y" or "activate these campaigns", execute it immediately.** Do NOT lecture them about strategy or refuse the request. Call \`propose_action_card\` with the correct parameters and let them approve. You can add strategic advice AFTER executing their request.
-7. **Never tell the user to "manually set up" things in Meta Ads Manager.** You have full tools to create campaigns, ad sets, and ads. Use them. The only things the user must do manually are: uploading creative files (images/videos) and connecting payment methods.
+7. **Never tell the user to "manually set up" things in Meta Ads Manager.** You have full tools to create the complete campaign structure. Use them. The only things the user must do manually are: uploading creative files (images/videos) and connecting payment methods.
 
 ## Holistic Strategic Budget Reasoning (CRITICAL)
 You are a SENIOR MEDIA BUYER & GROWTH STRATEGIST, not a template robot.
@@ -1167,14 +1159,26 @@ async function executeTool(
     }
 
     case 'create_campaign': {
+      // Unified: stores the full hierarchy (campaign + ad_sets + ads) in ONE action card
+      const structure = {
+        name: toolArgs.name,
+        daily_budget: toolArgs.daily_budget,
+        objective: toolArgs.objective || 'CONVERSIONS',
+        targeting: toolArgs.targeting || {},
+        ad_sets: toolArgs.ad_sets || []
+      }
+
+      const adSetCount = structure.ad_sets.length
+      const adCount = structure.ad_sets.reduce((sum: number, as: any) => sum + (as.ads?.length || 0), 0)
+
       const cardRes = await supabaseClient.from('action_cards').insert({
         user_id: userId,
         session_id: sessionId,
         campaign_id: null,
         priority: 'HIGH',
-        action_type: 'CREATE_CAMPAIGN',
-        proposed_changes: toolArgs,
-        reasoning: `Proposed creating new campaign: ${toolArgs.name}`,
+        action_type: 'CREATE_CAMPAIGN_STRUCTURE',
+        proposed_changes: structure,
+        reasoning: `Full campaign structure: "${toolArgs.name}" with ${adSetCount} ad set(s) and ${adCount} ad(s)`,
         status: 'PENDING'
       }).select().single()
 
@@ -1183,70 +1187,22 @@ async function executeTool(
       await supabaseClient.from('agent_memory').insert({
         user_id: userId,
         campaign_id: null,
-        decision_made: 'Proposed CREATE_CAMPAIGN: ' + toolArgs.name,
-        reasoning_snapshot: 'Queued action card for user approval to create campaign with daily budget ' + toolArgs.daily_budget
+        decision_made: `Proposed FULL STRUCTURE: ${toolArgs.name}`,
+        reasoning_snapshot: `Campaign + ${adSetCount} ad set(s) + ${adCount} ad(s). Budget: ${toolArgs.daily_budget}/day.`
       })
 
       return JSON.stringify({
         type: 'ACTION_PROPOSAL',
         card: cardRes.data,
-        message: `Campaign action card created for "${toolArgs.name}". IMPORTANT: Now you MUST also call create_ad_set and create_ad to build the complete hierarchy. Do NOT stop here.`
+        message: `Complete campaign structure queued: "${toolArgs.name}" with ${adSetCount} ad set(s) and ${adCount} ad(s). The user will see ONE action card to approve — when approved, the system creates Campaign → Ad Sets → Ads sequentially on Meta.`
       })
     }
 
-    case 'create_ad_set': {
-      const cardRes = await supabaseClient.from('action_cards').insert({
-        user_id: userId,
-        session_id: sessionId,
-        campaign_id: toolArgs.campaign_id,
-        priority: 'HIGH',
-        action_type: 'CREATE_AD_SET',
-        proposed_changes: toolArgs,
-        reasoning: `Proposed creating new ad set: ${toolArgs.name}`,
-        status: 'PENDING'
-      }).select().single()
-
-      if (cardRes.error) return JSON.stringify({ error: cardRes.error.message })
-
-      await supabaseClient.from('agent_memory').insert({
-        user_id: userId,
-        campaign_id: toolArgs.campaign_id,
-        decision_made: 'Proposed CREATE_AD_SET: ' + toolArgs.name,
-        reasoning_snapshot: 'Queued action card for user approval to create ad set.'
-      })
-
-      return JSON.stringify({
-        type: 'ACTION_PROPOSAL',
-        card: cardRes.data,
-        message: `Ad set action card created for "${toolArgs.name}". IMPORTANT: Now you MUST also call create_ad to build at least one ad under this ad set. Do NOT stop here.`
-      })
-    }
-
+    // Legacy support: if agent still calls create_ad_set or create_ad, handle gracefully
+    case 'create_ad_set':
     case 'create_ad': {
-      const cardRes = await supabaseClient.from('action_cards').insert({
-        user_id: userId,
-        session_id: sessionId,
-        campaign_id: null, // No direct campaign link for ad creation at this level to avoid FK constraint errors, parent info is in proposed_changes
-        priority: 'HIGH',
-        action_type: 'CREATE_AD',
-        proposed_changes: toolArgs,
-        reasoning: `Proposed creating new ad: ${toolArgs.name}`,
-        status: 'PENDING'
-      }).select().single()
-
-      if (cardRes.error) return JSON.stringify({ error: cardRes.error.message })
-
-      await supabaseClient.from('agent_memory').insert({
-        user_id: userId,
-        campaign_id: null,
-        decision_made: 'Proposed CREATE_AD: ' + toolArgs.name,
-        reasoning_snapshot: 'Queued action card for user approval to create ad.'
-      })
-
-      return JSON.stringify({
-        type: 'ACTION_PROPOSAL',
-        card: cardRes.data,
-        message: `Action card created for ad "${toolArgs.name}". Waiting for user approval before pushing to Meta.`
+      return JSON.stringify({ 
+        error: `The tool "${toolName}" no longer exists as a separate tool. Use create_campaign with ad_sets and ads arrays to build the complete hierarchy in one action card.`
       })
     }
 
@@ -1724,7 +1680,7 @@ serve(async (req) => {
           `4. HUMAN PARTNER OPENER & TOOL CONFIRMATION (CRITICAL):\n` +
           `   - ALWAYS open your final response with a warm, direct 1-sentence confirmation line connecting with the user as their personal Media Buyer (e.g., "I've queued your 24-Hour Watchdog schedule for approval in your Action Center so you can sleep peacefully! Here is your breakdown...").\n` +
           `   - Never start cold with raw section headers or tables. Acknowledge the user's emotion/need first, confirm any tool action taken, then deliver the breakdown.\n` +
-          `5. ACTION CARD AWARENESS: When you call a creation tool (create_campaign, create_ad_set, create_ad, propose_action_card), the system automatically generates a UI card for the user to approve. After calling the tool, tell the user to click Approve. If the user replies confirming or saying yes, they mean they will approve it in the UI — do NOT call the same creation tool again for the same entity. But if the user asks to create something NEW and DIFFERENT, you should absolutely call the tool.`;
+          `5. ACTION CARD AWARENESS: When you call a creation tool (create_campaign, propose_action_card), the system automatically generates ONE UI card for the user to approve. After calling the tool, tell the user to click Approve. If the user replies confirming or saying yes, they mean they will approve it in the UI — do NOT call the same creation tool again for the same entity. But if the user asks to create something NEW and DIFFERENT, you should absolutely call the tool.`;
 
         const responseMessages: any[] = [
           { role: 'system', content: responseWorkerPrompt },
