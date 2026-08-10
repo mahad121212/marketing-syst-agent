@@ -1843,10 +1843,11 @@ serve(async (req) => {
         ...history
       ]
 
-      let hasExecutedActionTool = false
+      let executedActionTools = new Set<string>()
       const MAX_ITERATIONS = 6
       for (let i = 0; i < MAX_ITERATIONS; i++) {
         thinkingSteps.push('Iteration ' + (i + 1) + ': Reasoning with ' + model + '...')
+        const availableTools = AGENT_TOOLS.filter(t => !executedActionTools.has(t.function.name))
 
         const reqDetails = getLLMRequestDetails(openRouterKey, model)
         const openRouterResponse = await fetch(reqDetails.url, {
@@ -1856,7 +1857,7 @@ serve(async (req) => {
             model: reqDetails.model,
             max_tokens: maxTokens,
             messages: finalMessages,
-            ...(hasExecutedActionTool ? {} : { tools: AGENT_TOOLS, tool_choice: 'auto' })
+            ...(availableTools.length > 0 ? { tools: availableTools, tool_choice: 'auto' } : {})
           })
         })
 
@@ -1891,7 +1892,7 @@ serve(async (req) => {
             } catch {}
 
             if (['create_campaign', 'create_ad_set', 'create_ad', 'propose_action_card'].includes(toolName)) {
-              hasExecutedActionTool = true
+              executedActionTools.add(toolName)
             }
 
             toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult.substring(0, 500), status: 'success' })
