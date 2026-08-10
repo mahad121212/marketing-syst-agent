@@ -250,17 +250,59 @@ serve(async (req) => {
               })
 
               adSetResult.ads.push({ name: adDef.name, meta_id: adData.id })
+              await supabaseClient.from('execution_logs').insert({
+                user_id: user.id,
+                session_id: sessionId,
+                action_card_id: actionCardId,
+                level: 'INFO',
+                message: `Successfully created Ad: ${adDef.name}`,
+                details: { meta_id: adData.id }
+              })
             } catch (adErr: any) {
               adSetResult.ads.push({ name: adDef.name, error: adErr.message })
+              await supabaseClient.from('execution_logs').insert({
+                user_id: user.id,
+                session_id: sessionId,
+                action_card_id: actionCardId,
+                level: 'ERROR',
+                message: `Failed to create Ad: ${adDef.name}`,
+                details: { error: adErr.message }
+              })
             }
           }
 
           results.ad_sets.push(adSetResult)
+          await supabaseClient.from('execution_logs').insert({
+            user_id: user.id,
+            session_id: sessionId,
+            action_card_id: actionCardId,
+            level: 'INFO',
+            message: `Successfully created Ad Set: ${adSetDef.name}`,
+            details: { meta_id: metaAdSetId }
+          })
         } catch (asErr: any) {
           results.ad_sets.push({ name: adSetDef.name, error: asErr.message })
+          await supabaseClient.from('execution_logs').insert({
+            user_id: user.id,
+            session_id: sessionId,
+            action_card_id: actionCardId,
+            level: 'ERROR',
+            message: `Failed to create Ad Set: ${adSetDef.name}`,
+            details: { error: asErr.message }
+          })
         }
       }
 
+      await supabaseClient.from('execution_logs').insert({
+        user_id: user.id,
+        session_id: sessionId,
+        action_card_id: actionCardId,
+        level: 'SUCCESS',
+        message: `Successfully created Campaign structure: ${proposedChanges.name}`,
+        details: { meta_id: metaCampaignId }
+      })
+
+      // Update Agent Memory
       await supabaseClient.from('action_cards').update({ status: 'APPROVED', resolved_at: new Date().toISOString() }).eq('id', action_card_id)
 
       await supabaseClient.from('agent_memory').insert({

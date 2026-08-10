@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Sparkles, CheckCircle2, AlertCircle, Wrench, ChevronDown, ChevronRight, Play, Plus, MessageSquare, Trash2, Clock, Target, X, Calendar, Eye } from 'lucide-react';
+import { Send, Bot, User, Sparkles, CheckCircle2, AlertCircle, Wrench, ChevronDown, ChevronRight, Play, Plus, MessageSquare, Trash2, Clock, Target, X, Calendar, Eye, Terminal } from 'lucide-react';
 import { AgentMessage } from '../types';
 import { supabase } from '../lib/supabase';
 import { FormattedMarkdown } from './FormattedMarkdown';
@@ -116,6 +116,14 @@ interface ActionCard {
   created_at: string;
 }
 
+interface ExecutionLog {
+  id: string;
+  level: string;
+  message: string;
+  details: any;
+  created_at: string;
+}
+
 interface GoalSchedule {
   id: string;
   target_id: string;
@@ -158,7 +166,9 @@ export const AgentChat: React.FC<AgentChatProps> = ({
   const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({});
   const [showGoalLibrary, setShowGoalLibrary] = useState(false);
   const [showActionLibrary, setShowActionLibrary] = useState(false);
+  const [showLogsLibrary, setShowLogsLibrary] = useState(false);
   const [actionCards, setActionCards] = useState<ActionCard[]>([]);
+  const [logs, setLogs] = useState<ExecutionLog[]>([]);
   const [executingActionId, setExecutingActionId] = useState<string | null>(null);
   const [goalSchedules, setGoalSchedules] = useState<GoalSchedule[]>([]);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -199,6 +209,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
     if (data) setGoalSchedules(data);
   };
 
+  // Load Action Cards
   const loadActionCards = async () => {
     if (!currentSessionId) return;
     const { data } = await supabase
@@ -208,6 +219,63 @@ export const AgentChat: React.FC<AgentChatProps> = ({
       .order('created_at', { ascending: false });
     if (data) setActionCards(data);
   };
+
+  // Load Execution Logs
+  const loadLogs = async () => {
+    if (!currentSessionId) return;
+    const { data } = await supabase
+      .from('execution_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(50);
+    if (data) setLogs(data);
+  };
+
+  // Reload data whenever session changes
+  useEffect(() => {
+    if (currentSessionId) { 
+      loadGoalSchedules(); 
+      loadActionCards(); 
+      loadLogs();
+    }
+  }, [currentSessionId]);
+
+  // Realtime updates
+  useEffect(() => {
+    loadGoalSchedules();
+    loadActionCards();
+    loadLogs();
+    
+    // Subscribe to action_cards changes
+    const actionsSub = supabase
+      .channel('public:action_cards')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'action_cards' }, () => {
+        loadActionCards();
+      })
+      .subscribe();
+
+    // Subscribe to goal_schedules changes
+    const goalsSub = supabase
+      .channel('public:goal_schedules')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'goal_schedules' }, () => {
+        loadGoalSchedules();
+      })
+      .subscribe();
+
+    // Subscribe to execution_logs changes
+    const logsSub = supabase
+      .channel('public:execution_logs')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'execution_logs' }, () => {
+        loadLogs();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(actionsSub);
+      supabase.removeChannel(goalsSub);
+      supabase.removeChannel(logsSub);
+    };
+  }, [currentSessionId]);
 
   const handleApproveAction = async (id: string) => {
     setExecutingActionId(id);
@@ -421,9 +489,23 @@ export const AgentChat: React.FC<AgentChatProps> = ({
             <span style={{ fontSize: '12px', color: '#6b7280' }}>
               Model: Gemini 3.6 Flash (Low) &bull; Supabase Tools Active
             </span>
+            {/* Logs Library Button */}
+            <button
+              onClick={() => { setShowLogsLibrary(!showLogsLibrary); setShowActionLibrary(false); setShowGoalLibrary(false); loadLogs(); }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '6px',
+                padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
+                border: '1px solid rgba(234, 179, 8, 0.3)',
+                backgroundColor: showLogsLibrary ? 'rgba(234, 179, 8, 0.15)' : 'rgba(234, 179, 8, 0.05)',
+                color: '#facc15', cursor: 'pointer', transition: 'all 0.2s',
+              }}
+            >
+              <Terminal style={{ width: '13px', height: '13px' }} />
+              Logs ({logs.length})
+            </button>
             {/* Goal Library Button */}
             <button
-              onClick={() => { setShowGoalLibrary(!showGoalLibrary); setShowActionLibrary(false); loadGoalSchedules(); }}
+              onClick={() => { setShowGoalLibrary(!showGoalLibrary); setShowActionLibrary(false); setShowLogsLibrary(false); loadGoalSchedules(); }}
               style={{
                 display: 'flex', alignItems: 'center', gap: '6px',
                 padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
@@ -436,7 +518,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
               Goals ({goalSchedules.filter(g => g.status === 'ACTIVE' || g.status === 'PENDING_APPROVAL').length})
             </button>
             <button
-              onClick={() => { setShowActionLibrary(!showActionLibrary); setShowGoalLibrary(false); loadActionCards(); }}
+              onClick={() => { setShowActionLibrary(!showActionLibrary); setShowGoalLibrary(false); setShowLogsLibrary(false); loadActionCards(); }}
               style={{
                 display: 'flex', alignItems: 'center', gap: '6px',
                 padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
@@ -908,6 +990,57 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                     )}
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showLogsLibrary && (
+        <div style={{ width: '380px', backgroundColor: '#0c111d', borderLeft: '1px solid rgba(255,255,255,0.06)', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '20px 24px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <Terminal style={{ width: '18px', height: '18px', color: '#facc15' }} />
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: '#f3f4f6' }}>Execution Logs</h3>
+            </div>
+            <button onClick={() => setShowLogsLibrary(false)} style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer' }}>
+              <X style={{ width: '18px', height: '18px' }} />
+            </button>
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+            {logs.length === 0 ? (
+              <div style={{ textAlign: 'center', color: '#6b7280', fontSize: '13px', marginTop: '40px' }}>
+                No execution logs in this session yet.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {logs.map(log => {
+                  let logColor = '#9ca3af';
+                  let logBg = 'rgba(255,255,255,0.03)';
+                  let logBorder = 'rgba(255,255,255,0.08)';
+                  if (log.level === 'ERROR') { logColor = '#ef4444'; logBg = 'rgba(239, 68, 68, 0.05)'; logBorder = 'rgba(239, 68, 68, 0.2)'; }
+                  if (log.level === 'SUCCESS') { logColor = '#10b981'; logBg = 'rgba(16, 185, 129, 0.05)'; logBorder = 'rgba(16, 185, 129, 0.2)'; }
+                  if (log.level === 'WARNING') { logColor = '#f59e0b'; logBg = 'rgba(245, 158, 11, 0.05)'; logBorder = 'rgba(245, 158, 11, 0.2)'; }
+                  
+                  return (
+                    <div key={log.id} style={{ padding: '12px', borderRadius: '8px', backgroundColor: logBg, border: `1px solid ${logBorder}` }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                        <span style={{ fontSize: '11px', fontWeight: 700, color: logColor }}>[{log.level}]</span>
+                        <span style={{ fontSize: '10px', color: '#6b7280' }}>
+                          {new Date(log.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'})}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#e5e7eb', marginBottom: '6px', lineHeight: '1.4' }}>
+                        {log.message}
+                      </div>
+                      {log.details && (
+                        <pre style={{ margin: 0, padding: '8px', backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: '4px', fontSize: '10px', color: '#9ca3af', overflowX: 'auto', whiteSpace: 'pre-wrap' }}>
+                          {JSON.stringify(log.details, null, 2)}
+                        </pre>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
