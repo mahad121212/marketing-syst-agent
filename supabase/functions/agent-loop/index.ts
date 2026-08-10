@@ -126,12 +126,12 @@ const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'create_ad_set',
-      description: 'Creates a new ad set under a campaign. When creating a full structure, pass the campaign name (e.g. "Urban Kicks - Winter Pro Sale") or the action card ID as campaign_id.',
+      description: 'Creates a new ad set under an existing campaign. Use this to segment audiences or test different targeting within a campaign.',
       parameters: {
         type: 'object',
         properties: {
-          campaign_id: { type: 'string', description: 'The identifier (UUID, Meta ID, or Campaign Name) of the parent campaign. If creating a new campaign structure in the same session, pass the Campaign Name or Action Card ID.' },
-          name: { type: 'string', description: 'Ad set name, e.g. "Broad_Winter_Pros" or "Males 25-34 Interest Health"' },
+          campaign_id: { type: 'string', description: 'The UUID of the parent campaign.' },
+          name: { type: 'string', description: 'Ad set name, e.g. "Males 25-34 Interest Health"' },
           targeting: { type: 'object', description: 'Targeting config for this ad set: { age_range, gender, interests, locations }' }
         },
         required: ['campaign_id', 'name']
@@ -142,12 +142,12 @@ const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'create_ad',
-      description: 'Creates a new ad under an ad set. When creating a full structure, pass the ad set name (e.g. "Broad_Winter_Pros") or the action card ID as ad_set_id.',
+      description: 'Creates a new ad under an existing ad set. Use this to test different creatives, copy, or CTAs within an ad set.',
       parameters: {
         type: 'object',
         properties: {
-          ad_set_id: { type: 'string', description: 'The identifier (UUID, Meta ID, or Ad Set Name) of the parent ad set. If creating a new structure, pass the Ad Set Name.' },
-          name: { type: 'string', description: 'Ad name, e.g. "Trust_Unboxing" or "Winter_Pro_Carousel"' },
+          ad_set_id: { type: 'string', description: 'The UUID of the parent ad set.' },
+          name: { type: 'string', description: 'Ad name, e.g. "Carousel - Summer Promo v1"' },
           copy: { type: 'string', description: 'The ad copy / primary text.' },
           cta: { type: 'string', description: 'Call to action, e.g. SHOP_NOW, LEARN_MORE, SIGN_UP' },
           creative_url: { type: 'string', description: 'URL to the creative image or video (optional).' }
@@ -871,8 +871,9 @@ When you call any of these tools, the system generates an "Action Card" in the u
 2. **Each tool call = one Action Card.** Calling create_campaign twice creates TWO separate campaigns. Only call it once per entity you want to create.
 3. **After calling the tool, guide the user to approve.** Tell them to click "Approve" on the Action Card that appeared in the chat. Do NOT call the same tool again when they reply saying "yes" or "approved" — they are confirming via the UI button, not asking you to re-create.
 4. **New requests = new tool calls.** If the user asks you to create a DIFFERENT campaign (new name, new purpose), that is a brand new request and you SHOULD call the tool again. Only avoid re-calling for the SAME entity.
-5. **FULL HIERARCHY CREATION (CRITICAL):** When the user asks to build, set up, or launch a campaign, you MUST generate Action Cards for ALL THREE levels: \`create_campaign\` -> \`create_ad_set\` -> \`create_ad\` (for each planned creative). Pass the campaign name to \`create_ad_set\` and the ad set name to \`create_ad\`. Do NOT stop at only the campaign level — the user expects the full 3-tier structure ready for approval.
+5. **ALWAYS create the full campaign hierarchy using tools.** When creating a campaign, you MUST also call \`create_ad_set\` and \`create_ad\` to build the complete Campaign → Ad Set → Ad structure. Do NOT just describe the ad set and ad in text — actually call the tools. The user expects to see 3 action cards: one for the campaign, one for the ad set, and one for the ad.
 6. **When the user gives a direct command like "rename X to Y" or "activate these campaigns", execute it immediately.** Do NOT lecture them about strategy or refuse the request. Call \`propose_action_card\` with the correct parameters and let them approve. You can add strategic advice AFTER executing their request.
+7. **Never tell the user to "manually set up" things in Meta Ads Manager.** You have full tools to create campaigns, ad sets, and ads. Use them. The only things the user must do manually are: uploading creative files (images/videos) and connecting payment methods.
 
 ## Holistic Strategic Budget Reasoning (CRITICAL)
 You are a SENIOR MEDIA BUYER & GROWTH STRATEGIST, not a template robot.
@@ -1717,53 +1718,41 @@ serve(async (req) => {
           `- Core Strategy Proposal:\n${conversationBrain.strategy_proposal}\n\n` +
           `- Expert Contributions & Reviews:\n${conversationBrain.expert_contributions.map((e: any) => `**${e.expert}:** ${e.review}`).join('\n\n')}\n\n` +
           `## CRITICAL EXECUTION RULES:\n` +
-          `1. FULL STRUCTURE GENERATION (MANDATORY): When the user or strategy requests building/launching a campaign, you MUST create the Action Cards for ALL THREE levels: create_campaign -> create_ad_set -> create_ad (one for each planned ad angle). You can call them in parallel or sequentially across iterations. NEVER stop at only the campaign level.\n` +
-          `2. PROPORTIONAL RESPONSE: If the user's original request is a data/observation question, LEAD with a clean, plain data presentation of what exists in the account.\n` +
-          `3. NO REDUNDANT TOOL CALLS: The Research Agent has already gathered all live account data. Only use creation/action tools if needed.\n` +
-          `4. SYNTHESIZE: Combine research evidence, core strategy, and expert contributions into your final response.\n` +
-          `5. HUMAN PARTNER OPENER & TOOL CONFIRMATION (CRITICAL):\n` +
-          `   - ALWAYS open your final response with a warm, direct 1-sentence confirmation line connecting with the user as their personal Media Buyer (e.g., "I've queued your Campaign, Ad Set, and Ad Action Cards for approval in your Action Center! Here is your complete strategic breakdown...").\n` +
+          `1. PROPORTIONAL RESPONSE: If the user's original request is a data/observation question, LEAD with a clean, plain data presentation of what exists in the account.\n` +
+          `2. NO REDUNDANT TOOL CALLS: The Research Agent has already gathered all live account data. Only use creation/action tools if needed.\n` +
+          `3. SYNTHESIZE: Combine research evidence, core strategy, and expert contributions into your final response.\n` +
+          `4. HUMAN PARTNER OPENER & TOOL CONFIRMATION (CRITICAL):\n` +
+          `   - ALWAYS open your final response with a warm, direct 1-sentence confirmation line connecting with the user as their personal Media Buyer (e.g., "I've queued your 24-Hour Watchdog schedule for approval in your Action Center so you can sleep peacefully! Here is your breakdown...").\n` +
           `   - Never start cold with raw section headers or tables. Acknowledge the user's emotion/need first, confirm any tool action taken, then deliver the breakdown.\n` +
-          `6. ACTION CARD AWARENESS: When you call creation tools (create_campaign, create_ad_set, create_ad, propose_action_card), the system automatically generates UI cards for the user to approve. Guide the user to approve them in order: Campaign first -> Ad Set second -> Ads third. Explain clearly that pushing the final ad live requires a connected Facebook Page and creative assets.`;
+          `5. ACTION CARD AWARENESS: When you call a creation tool (create_campaign, create_ad_set, create_ad, propose_action_card), the system automatically generates a UI card for the user to approve. After calling the tool, tell the user to click Approve. If the user replies confirming or saying yes, they mean they will approve it in the UI — do NOT call the same creation tool again for the same entity. But if the user asks to create something NEW and DIFFERENT, you should absolutely call the tool.`;
 
         const responseMessages: any[] = [
           { role: 'system', content: responseWorkerPrompt },
           ...history
         ]
 
-        let executedWorkerTools = new Set<string>()
-        const MAX_WORKER_ITERATIONS = 5
-
-        for (let wIter = 0; wIter < MAX_WORKER_ITERATIONS; wIter++) {
-          const availableWorkerTools = ACTION_TOOLS.filter(t => !executedWorkerTools.has(t.function.name))
-          const reqDetails = getLLMRequestDetails(openRouterKey, model)
-          
-          const workerRes = await fetch(reqDetails.url, {
-            method: 'POST',
-            headers: reqDetails.headers,
-            body: JSON.stringify({
-              model: reqDetails.model,
-              max_tokens: maxTokens,
-              messages: responseMessages,
-              ...(availableWorkerTools.length > 0 ? { tools: availableWorkerTools, tool_choice: 'auto' } : {})
-            })
+        const workerRes = await fetch(getLLMRequestDetails(openRouterKey, model).url, {
+          method: 'POST',
+          headers: getLLMRequestDetails(openRouterKey, model).headers,
+          body: JSON.stringify({
+            model: getLLMRequestDetails(openRouterKey, model).model,
+            max_tokens: maxTokens,
+            messages: responseMessages,
+            tools: ACTION_TOOLS,
+            tool_choice: 'auto'
           })
+        })
 
-          if (!workerRes.ok) {
-            console.error('Worker OpenRouter error:', await workerRes.text())
-            break
-          }
-
+        if (workerRes.ok) {
           const aiData = await workerRes.json()
           const assistantMsg = aiData.choices[0].message
-          responseMessages.push(assistantMsg)
-
+          finalContent = assistantMsg.content || ''
+          
           if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0) {
             for (const toolCall of assistantMsg.tool_calls) {
               const toolName = toolCall.function.name
               let toolArgs = {}
               try { toolArgs = JSON.parse(toolCall.function.arguments || '{}') } catch {}
-
               const toolResult = await executeTool(
                 toolName,
                 toolArgs,
@@ -1774,18 +1763,6 @@ serve(async (req) => {
                 settings?.meta_access_token || undefined,
                 settings?.meta_ad_account_id || undefined
               )
-
-              try {
-                const parsed = JSON.parse(toolResult)
-                if (parsed.type === 'PROPOSAL' || parsed.type === 'ACTION_PROPOSAL' || parsed.type === 'GOAL_PROPOSAL') {
-                  proposals.push(parsed)
-                }
-              } catch {}
-
-              if (['create_campaign', 'create_ad_set', 'propose_action_card'].includes(toolName)) {
-                executedWorkerTools.add(toolName)
-              }
-
               logStageAudit(thinkingSteps, {
                 phase: `PHASE_5_TOOL_${toolName.toUpperCase()}`,
                 icon: '🛠️',
@@ -1797,11 +1774,7 @@ serve(async (req) => {
                 raw_output: toolResult
               })
               toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult, status: 'success' })
-              responseMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResult })
             }
-          } else {
-            finalContent = assistantMsg.content || ''
-            break
           }
         }
 
@@ -1871,11 +1844,13 @@ serve(async (req) => {
         ...history
       ]
 
-      let executedActionTools = new Set<string>()
+      // Track specific (tool + entity name) pairs to prevent duplicate action cards
+      // e.g., "create_campaign::Urban Kicks - Winter Flash Sale" should only execute once
+      const executedActionKeys = new Set<string>()
+
       const MAX_ITERATIONS = 6
       for (let i = 0; i < MAX_ITERATIONS; i++) {
         thinkingSteps.push('Iteration ' + (i + 1) + ': Reasoning with ' + model + '...')
-        const availableTools = AGENT_TOOLS.filter(t => !executedActionTools.has(t.function.name))
 
         const reqDetails = getLLMRequestDetails(openRouterKey, model)
         const openRouterResponse = await fetch(reqDetails.url, {
@@ -1885,7 +1860,8 @@ serve(async (req) => {
             model: reqDetails.model,
             max_tokens: maxTokens,
             messages: finalMessages,
-            ...(availableTools.length > 0 ? { tools: availableTools, tool_choice: 'auto' } : {})
+            tools: AGENT_TOOLS,
+            tool_choice: 'auto'
           })
         })
 
@@ -1898,8 +1874,20 @@ serve(async (req) => {
         if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
           for (const toolCall of assistantMessage.tool_calls) {
             const toolName = toolCall.function.name
-            let toolArgs = {}
+            let toolArgs: any = {}
             try { toolArgs = JSON.parse(toolCall.function.arguments || '{}') } catch {}
+
+            // Deduplication: skip if the EXACT SAME action tool + entity was already executed
+            if (['create_campaign', 'create_ad_set', 'create_ad', 'propose_action_card'].includes(toolName)) {
+              const entityKey = toolArgs.proposed_changes?.name || toolArgs.name || toolArgs.target_id || ''
+              const actionKey = `${toolName}::${entityKey}`.toLowerCase()
+              if (executedActionKeys.has(actionKey)) {
+                thinkingSteps.push(`Skipped duplicate: ${toolName} for "${entityKey}"`)
+                finalMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: JSON.stringify({ skipped: true, message: `Already created action card for "${entityKey}". Tell the user to approve it.` }) })
+                continue
+              }
+              executedActionKeys.add(actionKey)
+            }
 
             thinkingSteps.push('Executing Tool: ' + toolName)
 
@@ -1918,10 +1906,6 @@ serve(async (req) => {
               const parsed = JSON.parse(toolResult)
               if (parsed.type === 'PROPOSAL' || parsed.type === 'ACTION_PROPOSAL' || parsed.type === 'GOAL_PROPOSAL') proposals.push(parsed)
             } catch {}
-
-            if (['create_campaign', 'create_ad_set', 'propose_action_card'].includes(toolName)) {
-              executedActionTools.add(toolName)
-            }
 
             toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult.substring(0, 500), status: 'success' })
             finalMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResult })
