@@ -118,6 +118,7 @@ serve(async (req) => {
           status: 'PAUSED',
           special_ad_categories: [],
           daily_budget: budget,
+          bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
           access_token: token
         })
       })
@@ -144,7 +145,12 @@ serve(async (req) => {
       const adSets = proposedChanges.ad_sets || []
       for (const adSetDef of adSets) {
         try {
-          const targeting: any = { geo_locations: { countries: ['PK'] }, age_min: 18, age_max: 65 }
+          const targeting: any = { 
+            geo_locations: { countries: ['PK'] }, 
+            age_min: 18, 
+            age_max: 65,
+            targeting_automation: { advantage_audience: 0 } 
+          }
           if (adSetDef.targeting) {
             if (adSetDef.targeting.locations) {
               const locs = Array.isArray(adSetDef.targeting.locations) ? adSetDef.targeting.locations : ['PK']
