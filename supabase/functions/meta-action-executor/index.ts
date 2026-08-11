@@ -348,16 +348,7 @@ serve(async (req) => {
         }
       }
 
-      // Strategy 4: Find most recently created campaign for this user
-      if (!parentMetaId) {
-        const { data: recent } = await supabaseClient.from('campaigns').select('id, meta_id').eq('user_id', user.id).not('meta_id', 'is', null).order('created_at', { ascending: false }).limit(1).maybeSingle()
-        if (recent?.meta_id) {
-          parentMetaId = recent.meta_id
-          parentLocalId = recent.id
-        }
-      }
-
-      if (!parentMetaId) throw new Error('Parent campaign does not have a real Meta ID. Please approve the campaign Action Card first.')
+      if (!parentMetaId) throw new Error('Parent campaign does not have a real Meta ID. Please provide a valid Campaign ID or approve the campaign Action Card first.')
 
       const metaUrl = `https://graph.facebook.com/v21.0/${cleanId}/adsets`
       const payload: any = {
@@ -445,16 +436,7 @@ serve(async (req) => {
         }
       }
 
-      // Strategy 4: Find most recently created ad set for this user
-      if (!parentAdSetMetaId) {
-        const { data: recent } = await supabaseClient.from('ad_sets').select('id, meta_id').eq('user_id', user.id).not('meta_id', 'is', null).order('created_at', { ascending: false }).limit(1).maybeSingle()
-        if (recent?.meta_id) {
-          parentAdSetMetaId = recent.meta_id
-          parentAdSetLocalId = recent.id
-        }
-      }
-
-      if (!parentAdSetMetaId) throw new Error('Parent ad set does not have a real Meta ID. Please approve the Ad Set Action Card first.')
+      if (!parentAdSetMetaId) throw new Error('Parent ad set does not have a real Meta ID. Please provide a valid Ad Set ID or approve the Ad Set Action Card first.')
 
       const pagesRes = await fetch(`https://graph.facebook.com/v21.0/me/accounts?access_token=${token}`)
       const pagesData = await pagesRes.json()
