@@ -252,8 +252,8 @@ serve(async (req) => {
               adSetResult.ads.push({ name: adDef.name, meta_id: adData.id })
               await supabaseClient.from('execution_logs').insert({
                 user_id: user.id,
-                session_id: sessionId,
-                action_card_id: actionCardId,
+                session_id: card.session_id,
+                action_card_id: action_card_id,
                 level: 'INFO',
                 message: `Successfully created Ad: ${adDef.name}`,
                 details: { meta_id: adData.id }
@@ -262,8 +262,8 @@ serve(async (req) => {
               adSetResult.ads.push({ name: adDef.name, error: adErr.message })
               await supabaseClient.from('execution_logs').insert({
                 user_id: user.id,
-                session_id: sessionId,
-                action_card_id: actionCardId,
+                session_id: card.session_id,
+                action_card_id: action_card_id,
                 level: 'ERROR',
                 message: `Failed to create Ad: ${adDef.name}`,
                 details: { error: adErr.message }
@@ -274,8 +274,8 @@ serve(async (req) => {
           results.ad_sets.push(adSetResult)
           await supabaseClient.from('execution_logs').insert({
             user_id: user.id,
-            session_id: sessionId,
-            action_card_id: actionCardId,
+            session_id: card.session_id,
+            action_card_id: action_card_id,
             level: 'INFO',
             message: `Successfully created Ad Set: ${adSetDef.name}`,
             details: { meta_id: metaAdSetId }
@@ -284,8 +284,8 @@ serve(async (req) => {
           results.ad_sets.push({ name: adSetDef.name, error: asErr.message })
           await supabaseClient.from('execution_logs').insert({
             user_id: user.id,
-            session_id: sessionId,
-            action_card_id: actionCardId,
+            session_id: card.session_id,
+            action_card_id: action_card_id,
             level: 'ERROR',
             message: `Failed to create Ad Set: ${adSetDef.name}`,
             details: { error: asErr.message }
@@ -295,8 +295,8 @@ serve(async (req) => {
 
       await supabaseClient.from('execution_logs').insert({
         user_id: user.id,
-        session_id: sessionId,
-        action_card_id: actionCardId,
+        session_id: card.session_id,
+        action_card_id: action_card_id,
         level: 'SUCCESS',
         message: `Successfully created Campaign structure: ${proposedChanges.name}`,
         details: { meta_id: metaCampaignId }
@@ -705,11 +705,11 @@ serve(async (req) => {
     
     // Safely attempt to log the global error to execution_logs if we have the necessary IDs
     try {
-      if (typeof actionCardId !== 'undefined' && typeof user !== 'undefined' && typeof sessionId !== 'undefined') {
+      if (typeof action_card_id !== 'undefined' && typeof user !== 'undefined' && typeof card !== 'undefined' && typeof card.session_id !== 'undefined') {
         await supabaseClient.from('execution_logs').insert({
           user_id: user.id,
-          session_id: sessionId,
-          action_card_id: actionCardId,
+          session_id: card.session_id,
+          action_card_id: action_card_id,
           level: 'ERROR',
           message: `Execution failed: ${error.message}`,
           details: { error: error.message }
