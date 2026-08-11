@@ -1207,6 +1207,25 @@ async function executeTool(
     }
 
     case 'create_campaign': {
+      // Prevent duplicate creation of the same campaign in a single session
+      const { data: existingCards } = await supabaseClient
+        .from('action_cards')
+        .select('id, proposed_changes')
+        .eq('session_id', sessionId)
+        .eq('action_type', 'CREATE_CAMPAIGN_STRUCTURE')
+        .eq('status', 'PENDING');
+        
+      if (existingCards && existingCards.length > 0) {
+        const isDuplicateName = existingCards.some((card: any) => 
+          card.proposed_changes && card.proposed_changes.name === toolArgs.name
+        );
+        if (isDuplicateName) {
+           return JSON.stringify({
+             error: `A campaign structure named "${toolArgs.name}" is already pending approval in this session. Do NOT call create_campaign again for this campaign. If you meant to add more ad sets, you must put them all in ONE single create_campaign tool call.`
+           })
+        }
+      }
+
       // Unified: stores the full hierarchy (campaign + ad_sets + ads) in ONE action card
       const structure = {
         name: toolArgs.name,
