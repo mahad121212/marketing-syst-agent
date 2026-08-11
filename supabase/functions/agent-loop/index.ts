@@ -1255,7 +1255,7 @@ async function executeTool(
         user_id: userId,
         campaign_id: null,
         decision_made: `Proposed FULL STRUCTURE: ${toolArgs.name}`,
-        reasoning_snapshot: `Campaign + ${adSetCount} ad set(s) + ${adCount} ad(s). Budget: ${toolArgs.daily_budget}/day.`
+        reasoning_snapshot: `Campaign + ${adSetCount} ad set(s) + ${adCount} ad(s). Budget: ${toolArgs.daily_budget}/day. Payload JSON: ${JSON.stringify(structure)}`
       })
 
       return JSON.stringify({
@@ -1290,6 +1290,14 @@ async function executeTool(
       }).select().single()
       
       if (cardRes.error) return JSON.stringify({ error: cardRes.error.message })
+
+      await supabaseClient.from('agent_memory').insert({
+        user_id: userId,
+        campaign_id: toolArgs.campaign_id,
+        decision_made: `Proposed AD SET STRUCTURE: ${toolArgs.name}`,
+        reasoning_snapshot: `Added ${adCount} ad(s) to campaign. Payload JSON: ${JSON.stringify(proposedChanges.ad_sets[0])}`
+      })
+
       return JSON.stringify({
         type: 'ACTION_PROPOSAL',
         card: cardRes.data,
@@ -1318,6 +1326,14 @@ async function executeTool(
       }).select().single()
       
       if (cardRes.error) return JSON.stringify({ error: cardRes.error.message })
+
+      await supabaseClient.from('agent_memory').insert({
+        user_id: userId,
+        campaign_id: null,
+        decision_made: `Proposed AD: ${toolArgs.name}`,
+        reasoning_snapshot: `Added ad to ad set. Payload JSON: ${JSON.stringify(proposedChanges)}`
+      })
+
       return JSON.stringify({
         type: 'ACTION_PROPOSAL',
         card: cardRes.data,
@@ -1695,7 +1711,7 @@ serve(async (req) => {
 
         // ===== PHASE 3: Strategy Agent (Deep Reasoning) =====
         const strategySystemPrompt = generateStrategyAgentPrompt(businessProfile)
-        const strategyInput = `## COMPLETE CONTEXT CHAIN:\n\n### 1. User's Original Request\n${prompt}\n\n### 2. Strategic Planner's First-Principles Thinking\n${conversationBrain.planner_thinking}\n\n### 3. Pre-Execution Plan Blueprint\n${conversationBrain.pre_execution_plan}\n\n### 4. Research Agent's Synthesis\n${conversationBrain.research_synthesis}\n\n### 5. Research Evidence Data\n${JSON.stringify(conversationBrain.evidence, null, 2)}\n\n### 6. Knowledge Context\n${knowledgeContext}`
+        const strategyInput = `## COMPLETE CONTEXT CHAIN:\n\n### 1. User's Original Request\n${prompt}\n\n### 2. Strategic Planner's First-Principles Thinking\n${conversationBrain.planner_thinking}\n\n### 3. Pre-Execution Plan Blueprint\n${conversationBrain.pre_execution_plan}\n\n### 4. Research Agent's Synthesis\n${conversationBrain.research_synthesis}\n\n### 5. Research Evidence Data (GROUND TRUTH)\n${JSON.stringify(conversationBrain.evidence, null, 2)}\n\n### 6. Knowledge Context\n${knowledgeContext}\n\nCRITICAL INSTRUCTION: The 'Research Agent Synthesis' is a human-readable summary. If it contradicts the raw JSON 'Research Evidence Data' in any way, you MUST trust the JSON data as the absolute ground truth.`
         try {
           const reqDetails = getLLMRequestDetails(openRouterKey, model)
           const strategyRes = await fetch(reqDetails.url, {
@@ -1800,7 +1816,8 @@ serve(async (req) => {
           `   - ALWAYS open your final response with a warm, direct 1-sentence confirmation line connecting with the user as their personal Media Buyer (e.g., "I've queued your 24-Hour Watchdog schedule for approval in your Action Center so you can sleep peacefully! Here is your breakdown...").\n` +
           `   - Never start cold with raw section headers or tables. Acknowledge the user's emotion/need first, confirm any tool action taken, then deliver the breakdown.\n` +
           `5. ACTION CARD AWARENESS: When you call a creation tool (create_campaign, propose_action_card), the system automatically generates ONE UI card for the user to approve. After calling the tool, tell the user to click Approve. If the user replies confirming or saying yes, they mean they will approve it in the UI — do NOT call the same creation tool again for the same entity. But if the user asks to create something NEW and DIFFERENT, you should absolutely call the tool.\n` +
-          `6. ABSOLUTE OBEDIENCE TO MASTER STRATEGY (CRITICAL): You are the Execution Worker. The Master Strategy Agent has already decided WHAT to do. If the Core Strategy Proposal advises AGAINST a specific action (e.g., "Recommendation: Do not create a new ad set"), you MUST NOT call the tool to execute it! Do NOT try to please the user by executing a tool that the Master Strategy has rejected. If the strategy dictates refusal, simply explain the reasoning to the user and DO NOT call the tool.`;
+          `6. ABSOLUTE OBEDIENCE TO MASTER STRATEGY (CRITICAL): You are the Execution Worker. The Master Strategy Agent has already decided WHAT to do. If the Core Strategy Proposal advises AGAINST a specific action (e.g., "Recommendation: Do not create a new ad set"), you MUST NOT call the tool to execute it! Do NOT try to please the user by executing a tool that the Master Strategy has rejected. If the strategy dictates refusal, simply explain the reasoning to the user and DO NOT call the tool.\n` +
+          `7. CONFLICT RESOLUTION PROTOCOL: If the Expert Contributions disagree with each other, resolve using this strict hierarchy of authority: 1) Finance & Performance (budget/CPA constraints are absolute). 2) Compliance & Policy (bans are absolute). 3) Strategy. 4) Creative/Copy. Never execute a "half-measure" compromise that ruins both approaches. Follow the highest authority.`;
 
         const responseMessages: any[] = [
           { role: 'system', content: responseWorkerPrompt },
@@ -1884,7 +1901,7 @@ serve(async (req) => {
                 model: reqDetails.model,
                 max_tokens: maxTokens,
                 messages: [
-                  { role: 'system', content: generateFormatterPrompt() },
+                  { role: 'system', content: generateFormatterPrompt() + "\n\nCRITICAL RULE: If the input contains an 'Execution & Action Summary' section with tool executions, you MUST preserve it exactly as written at the end of your response. Do not summarize, omit, or alter the facts of what tools were executed." },
                   { role: 'user', content: `Structure and format this content beautifully:\n\n${finalContent}` }
                 ]
               })
