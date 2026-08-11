@@ -109,7 +109,7 @@ const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'create_campaign',
-      description: 'Creates a COMPLETE campaign structure: Campaign + Ad Sets + Ads — all in ONE action card. The user approves once, and the system creates all levels sequentially on Meta. You MUST include at least one ad_set with at least one ad inside it. Do NOT call create_ad_set or create_ad separately — they do not exist as separate tools.',
+      description: 'Creates a COMPLETE campaign structure: Campaign + Ad Sets + Ads — all in ONE action card. The user approves once, and the system creates all levels sequentially on Meta. You MUST include at least one ad_set with at least one ad inside it.',
       parameters: {
         type: 'object',
         properties: {
@@ -145,6 +145,54 @@ const AGENT_TOOLS = [
           }
         },
         required: ['name', 'daily_budget', 'ad_sets']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_ad_set',
+      description: 'Creates a new Ad Set (along with its Ads) inside an EXISTING campaign. Do NOT create a new campaign just to hold a new ad set if an appropriate campaign already exists. Pass the parent campaign ID, the new ad set details, and the new ads.',
+      parameters: {
+        type: 'object',
+        properties: {
+          campaign_id: { type: 'string', description: 'REQUIRED. The Meta ID or UUID of the parent campaign to add this ad set to.' },
+          name: { type: 'string', description: 'Ad set name' },
+          targeting: { type: 'object', description: 'Targeting config: { age_range: {min, max}, locations: ["PK"] }' },
+          ads: {
+            type: 'array',
+            description: 'REQUIRED. Array of ads to create under this new ad set.',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string', description: 'Ad name' },
+                copy: { type: 'string', description: 'Ad text' },
+                cta: { type: 'string', description: 'Call to action: SHOP_NOW, LEARN_MORE, etc' },
+                creative_url: { type: 'string', description: 'Optional creative URL' }
+              },
+              required: ['name', 'copy']
+            }
+          }
+        },
+        required: ['campaign_id', 'name', 'ads']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_ad',
+      description: 'Creates a new Ad inside an EXISTING Ad Set. Do NOT create a new campaign or ad set just to hold a new ad if an appropriate one already exists. Pass the parent ad set ID and the ad details.',
+      parameters: {
+        type: 'object',
+        properties: {
+          ad_set_id: { type: 'string', description: 'REQUIRED. The Meta ID or UUID of the parent ad set to add this ad to.' },
+          name: { type: 'string', description: 'Ad name, e.g. "Winter Promo Video"' },
+          copy: { type: 'string', description: 'Ad primary text / copy' },
+          cta: { type: 'string', description: 'Call to action: SHOP_NOW, LEARN_MORE, SIGN_UP, SEND_MESSAGE' },
+          creative_url: { type: 'string', description: 'Optional URL to creative asset' }
+        },
+        required: ['ad_set_id', 'name', 'copy']
       }
     }
   }
@@ -863,7 +911,7 @@ When you call any of these tools, the system generates an "Action Card" in the u
 2. **Each tool call = one Action Card.** Calling create_campaign twice creates TWO separate campaigns. Only call it once per entity you want to create.
 3. **After calling the tool, guide the user to approve.** Tell them to click "Approve" on the Action Card that appeared in the chat. Do NOT call the same tool again when they reply saying "yes" or "approved" — they are confirming via the UI button, not asking you to re-create.
 4. **New requests = new tool calls.** If the user asks you to create a DIFFERENT campaign (new name, new purpose), that is a brand new request and you SHOULD call the tool again. Only avoid re-calling for the SAME entity.
-5. **ALWAYS include the full hierarchy in create_campaign.** When creating a campaign, you MUST include the \`ad_sets\` array with at least one ad set, and each ad set MUST include an \`ads\` array with at least one ad. The create_campaign tool creates the ENTIRE structure (Campaign → Ad Sets → Ads) in ONE action card. The user approves once, and all levels are created sequentially on Meta. There are NO separate create_ad_set or create_ad tools.
+5. **ALWAYS include the full hierarchy in create_campaign.** When creating a campaign, you MUST include the \`ad_sets\` array with at least one ad set, and each ad set MUST include an \`ads\` array with at least one ad. The create_campaign tool creates the ENTIRE structure (Campaign → Ad Sets → Ads) in ONE action card. The user approves once, and all levels are created sequentially on Meta. Use create_ad_set if you ONLY want to add an ad set to an EXISTING campaign. Use create_ad if you ONLY want to add an ad to an EXISTING ad set.
 6. **When the user gives a direct command like "rename X to Y" or "activate these campaigns", execute it immediately.** Do NOT lecture them about strategy or refuse the request. Call \`propose_action_card\` with the correct parameters and let them approve. You can add strategic advice AFTER executing their request.
 7. **Never tell the user to "manually set up" things in Meta Ads Manager.** You have full tools to create the complete campaign structure. Use them. The only things the user must do manually are: uploading creative files (images/videos) and connecting payment methods.
 
@@ -1198,11 +1246,63 @@ async function executeTool(
       })
     }
 
-    // Legacy support: if agent still calls create_ad_set or create_ad, handle gracefully
-    case 'create_ad_set':
+    case 'create_ad_set': {
+      const adCount = toolArgs.ads ? toolArgs.ads.length : 0;
+      const proposedChanges = {
+        campaign_id: toolArgs.campaign_id,
+        ad_sets: [
+          {
+            name: toolArgs.name,
+            targeting: toolArgs.targeting || {},
+            ads: toolArgs.ads || []
+          }
+        ]
+      };
+      
+      const cardRes = await supabaseClient.from('action_cards').insert({
+        user_id: userId,
+        session_id: sessionId,
+        campaign_id: toolArgs.campaign_id,
+        action_type: 'CREATE_AD_SET',
+        proposed_changes: proposedChanges,
+        reasoning: `User requested to create a new Ad Set "${toolArgs.name}" with ${adCount} ad(s) inside the existing campaign.`,
+        priority: 'HIGH',
+        status: 'PENDING'
+      }).select().single()
+      
+      if (cardRes.error) return JSON.stringify({ error: cardRes.error.message })
+      return JSON.stringify({
+        type: 'ACTION_PROPOSAL',
+        card: cardRes.data,
+        message: `New Ad Set structure queued: "${toolArgs.name}" with ${adCount} ad(s). The user will see ONE action card to approve.`
+      })
+    }
+
     case 'create_ad': {
-      return JSON.stringify({ 
-        error: `The tool "${toolName}" no longer exists as a separate tool. Use create_campaign with ad_sets and ads arrays to build the complete hierarchy in one action card.`
+      const proposedChanges = {
+        ad_set_id: toolArgs.ad_set_id,
+        name: toolArgs.name,
+        copy: toolArgs.copy,
+        cta: toolArgs.cta,
+        creative_url: toolArgs.creative_url
+      };
+      
+      const cardRes = await supabaseClient.from('action_cards').insert({
+        user_id: userId,
+        session_id: sessionId,
+        campaign_id: null, // Tied to Ad Set
+        action_type: 'CREATE_AD',
+        proposed_changes: proposedChanges,
+        reasoning: `User requested to create a new Ad "${toolArgs.name}" inside the existing ad set.`,
+        priority: 'HIGH',
+        status: 'PENDING'
+      }).select().single()
+      
+      if (cardRes.error) return JSON.stringify({ error: cardRes.error.message })
+      return JSON.stringify({
+        type: 'ACTION_PROPOSAL',
+        card: cardRes.data,
+        message: `New Ad queued: "${toolArgs.name}". The user will see ONE action card to approve.`
       })
     }
 
