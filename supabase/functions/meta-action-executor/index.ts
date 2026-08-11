@@ -702,6 +702,24 @@ serve(async (req) => {
 
   } catch (error: any) {
     console.error('Meta action executor error:', error.message)
-    return new Response(JSON.stringify({ success: false, error: error.message }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 })
+    
+    // Safely attempt to log the global error to execution_logs if we have the necessary IDs
+    try {
+      if (typeof actionCardId !== 'undefined' && typeof user !== 'undefined' && typeof sessionId !== 'undefined') {
+        await supabaseClient.from('execution_logs').insert({
+          user_id: user.id,
+          session_id: sessionId,
+          action_card_id: actionCardId,
+          level: 'ERROR',
+          message: `Execution failed: ${error.message}`,
+          details: { error: error.message }
+        })
+      }
+    } catch (logErr) {
+      console.error('Failed to write to execution_logs in catch block:', logErr)
+    }
+
+    // Return a 200 status with success: false so the frontend can display the actual error
+    return new Response(JSON.stringify({ success: false, error: error.message }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 })
   }
 })
