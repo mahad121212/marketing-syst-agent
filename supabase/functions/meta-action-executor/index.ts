@@ -350,26 +350,28 @@ serve(async (req) => {
 
       if (!parentMetaId) throw new Error('Parent campaign does not have a real Meta ID. Please provide a valid Campaign ID or approve the campaign Action Card first.')
 
+      const adSetData = (proposedChanges.ad_sets && proposedChanges.ad_sets.length > 0) ? proposedChanges.ad_sets[0] : proposedChanges;
+
       const metaUrl = `https://graph.facebook.com/v21.0/${cleanId}/adsets`
       const payload: any = {
         campaign_id: parentMetaId,
-        name: proposedChanges.name,
+        name: adSetData.name,
         status: 'ACTIVE',
         billing_event: 'IMPRESSIONS',
         optimization_goal: 'LINK_CLICKS',
         targeting: { geo_locations: { countries: ['PK'] }, age_min: 18, age_max: 65 },
         access_token: token
       }
-      if (proposedChanges.bid_amount) payload.bid_amount = Math.round(proposedChanges.bid_amount * 100)
+      if (adSetData.bid_amount) payload.bid_amount = Math.round(adSetData.bid_amount * 100)
 
-      // Apply targeting from proposed_changes if provided
-      if (proposedChanges.targeting) {
-        if (proposedChanges.targeting.locations) {
-          payload.targeting.geo_locations.countries = Array.isArray(proposedChanges.targeting.locations) ? proposedChanges.targeting.locations : ['PK']
+      // Apply targeting from adSetData if provided
+      if (adSetData.targeting) {
+        if (adSetData.targeting.locations) {
+          payload.targeting.geo_locations.countries = Array.isArray(adSetData.targeting.locations) ? adSetData.targeting.locations : ['PK']
         }
-        if (proposedChanges.targeting.age_range) {
-          payload.targeting.age_min = proposedChanges.targeting.age_range.min || proposedChanges.targeting.age_range[0] || 18
-          payload.targeting.age_max = proposedChanges.targeting.age_range.max || proposedChanges.targeting.age_range[1] || 65
+        if (adSetData.targeting.age_range) {
+          payload.targeting.age_min = adSetData.targeting.age_range.min || adSetData.targeting.age_range[0] || 18
+          payload.targeting.age_max = adSetData.targeting.age_range.max || adSetData.targeting.age_range[1] || 65
         }
       }
 
@@ -383,8 +385,8 @@ serve(async (req) => {
         user_id: user.id,
         campaign_id: parentLocalId,
         meta_id: metaAdSetId,
-        name: proposedChanges.name,
-        targeting: proposedChanges.targeting || {},
+        name: adSetData.name,
+        targeting: adSetData.targeting || {},
         status: 'ACTIVE',
         performance_metrics: { spend: 0, impressions: 0, ctr: 0, cpc: 0 }
       }).select().single()
