@@ -359,7 +359,7 @@ serve(async (req) => {
         status: 'ACTIVE',
         billing_event: 'IMPRESSIONS',
         optimization_goal: 'LINK_CLICKS',
-        targeting: { geo_locations: { countries: ['PK'] }, age_min: 18, age_max: 65 },
+        targeting: { geo_locations: { countries: ['PK'] }, age_min: 18, age_max: 65, targeting_automation: { advantage_audience: 0 } },
         access_token: token
       }
       if (adSetData.bid_amount) payload.bid_amount = Math.round(adSetData.bid_amount * 100)
