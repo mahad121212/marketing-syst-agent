@@ -202,7 +202,7 @@ const AGENT_TOOLS = [
 // ACTION TOOLS FOR STAGE 10 WORKER (Excludes Read-Only Tools)
 // ============================================================
 const ACTION_TOOLS = AGENT_TOOLS.filter(t => 
-  ['create_campaign', 'propose_action_card', 'schedule_monitoring_review', 'set_goal_schedule', 'report_no_action'].includes(t.function.name)
+  ['create_campaign', 'create_ad_set', 'create_ad', 'propose_action_card', 'schedule_monitoring_review', 'set_goal_schedule', 'report_no_action'].includes(t.function.name)
 )
 
 function logStageAudit(
