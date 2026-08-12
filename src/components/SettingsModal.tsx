@@ -150,6 +150,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onSave }) => {
                 cursor: 'pointer'
               }}>
               <optgroup label="OpenRouter Models">
+                <option value="deepseek/deepseek-v4-flash">DeepSeek: v4 Flash</option>
                 <option value="moonshotai/kimi-k3">Moonshot: Kimi K3</option>
                 <option value="anthropic/claude-opus-5">Anthropic: Claude Opus 5</option>
                 <option value="openai/gpt-5.6-terra">OpenAI: GPT-5.6 Terra</option>
