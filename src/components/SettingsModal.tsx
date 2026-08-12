@@ -154,6 +154,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onSave }) => {
                 <option value="moonshotai/kimi-k3">Moonshot: Kimi K3</option>
                 <option value="anthropic/claude-opus-5">Anthropic: Claude Opus 5</option>
                 <option value="openai/gpt-5.6-terra">OpenAI: GPT-5.6 Terra</option>
+                <option value="openai/gpt-5.6-luna">OpenAI: GPT-5.6 Luna</option>
                 <option value="openai/gpt-4o-mini">OpenAI: GPT-4o Mini (Fast/Efficient)</option>
                 <option value="google/gemma-4-31b-it">Google: Gemma 4 31B IT</option>
                 <option value="google/gemini-2.5-flash-lite">Google: Gemini 2.5 Flash Lite</option>
