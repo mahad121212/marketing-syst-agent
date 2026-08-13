@@ -1408,23 +1408,14 @@ serve(async (req) => {
 
     // Trigger live Meta sync on-demand before starting reasoning
     if (settings.meta_access_token && settings.meta_ad_account_id) {
-      try {
-        console.log('Triggering live Meta data sync on-demand...')
-        const syncRes = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/meta-data-sync`, {
-          method: 'POST',
-          headers: {
-            'Authorization': req.headers.get('Authorization')!
-          }
-        })
-        if (!syncRes.ok) {
-          console.error('On-demand Meta sync failed:', await syncRes.text())
-        } else {
-          console.log('On-demand Meta sync completed successfully.')
-        }
-      } catch (syncErr: any) {
-        console.error('Error during on-demand Meta sync:', syncErr.message)
-      }
+      // Run Meta sync in background without awaiting it to speed up boot
+      console.log('Triggering live Meta data sync on-demand...')
+      fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/meta-data-sync`, {
+        method: 'POST',
+        headers: { 'Authorization': req.headers.get('Authorization')! }
+      }).catch(err => console.error('On-demand Meta sync failed:', err.message))
     }
+
 
     // Fetch Business Profile for Context
     const { data: businessProfile } = await supabaseClient.from('business_profiles').select('*').eq('user_id', user.id).single()
@@ -1435,6 +1426,7 @@ serve(async (req) => {
     const maxTokens = 4096
     const reviewerMaxTokens = 2048
 
+    // 1. Save user message immediately
     const { error: userMsgErr } = await supabaseClient.from('chat_messages').insert({
       session_id,
       user_id: user.id,
@@ -1443,19 +1435,32 @@ serve(async (req) => {
     })
     if (userMsgErr) throw new Error('Failed to save user message: ' + userMsgErr.message)
 
-    // 2. Fetch past chat history for this session (last 20 messages)
-    const { data: pastMessages } = await supabaseClient
-      .from('chat_messages')
-      .select('role, content')
-      .eq('session_id', session_id)
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
-      .limit(20)
+    // 2. Save a "PENDING" agent message immediately so the UI can listen to it
+    const { data: pendingAgentMsg, error: pendingErr } = await supabaseClient.from('chat_messages').insert({
+      session_id,
+      user_id: user.id,
+      role: 'agent',
+      content: 'Agent is thinking...',
+      status: 'PENDING'
+    }).select().single()
+    if (pendingErr) throw new Error('Failed to create pending agent message: ' + pendingErr.message)
 
-    const history = (pastMessages || []).reverse().map(msg => ({
-      role: msg.role === 'agent' ? 'assistant' : 'user',
-      content: msg.content || ''
-    }))
+    // Define the async background processor
+    const processAgentLoop = async () => {
+      try {
+        const { data: pastMessages } = await supabaseClient
+          .from('chat_messages')
+          .select('role, content')
+          .eq('session_id', session_id)
+          .eq('user_id', user.id)
+          .neq('id', pendingAgentMsg.id) // Exclude the pending message
+          .order('created_at', { ascending: false })
+          .limit(20)
+
+        const history = (pastMessages || []).reverse().map(msg => ({
+          role: msg.role === 'agent' ? 'assistant' : 'user',
+          content: msg.content || ''
+        }))
 
     const toolExecutions: any[] = []
     const thinkingSteps: any[] = []
@@ -2017,21 +2022,37 @@ serve(async (req) => {
       details: { prompt, model, iterations: toolExecutions.length, proposals: proposals.length }
     })
 
-    // 3. Save the final agent response to history
-    const { error: agentMsgErr } = await supabaseClient.from('chat_messages').insert({
-      session_id,
-      user_id: user.id,
-      role: 'agent',
-      content: finalContent,
-      thinking_steps: thinkingSteps,
-      tool_calls: toolExecutions,
-      proposal: proposals.length > 0 ? proposals : null
-    })
-    if (agentMsgErr) throw new Error('Failed to save agent message: ' + agentMsgErr.message)
+        // 3. Update the pending agent response in history
+        const { error: agentMsgErr } = await supabaseClient.from('chat_messages').update({
+          content: finalContent,
+          thinking_steps: thinkingSteps,
+          tool_calls: toolExecutions,
+          proposal: proposals.length > 0 ? proposals : null,
+          status: 'COMPLETED'
+        }).eq('id', pendingAgentMsg.id)
+        if (agentMsgErr) console.error('Failed to update agent message:', agentMsgErr.message)
 
+      } catch (bgError: any) {
+        console.error('Background processing failed:', bgError.message)
+        await supabaseClient.from('chat_messages').update({
+          content: 'Agent encountered a fatal error during reasoning: ' + bgError.message,
+          status: 'ERROR'
+        }).eq('id', pendingAgentMsg.id)
+      }
+    } // End of processAgentLoop
+
+    // Run the background task without blocking the HTTP response
+    // Supabase standard uses EdgeRuntime.waitUntil if available, or just standard dangling promises.
+    if (typeof (globalThis as any).EdgeRuntime !== 'undefined' && (globalThis as any).EdgeRuntime.waitUntil) {
+      (globalThis as any).EdgeRuntime.waitUntil(processAgentLoop())
+    } else {
+      processAgentLoop().catch(console.error)
+    }
+
+    // Return 202 Accepted immediately
     return new Response(
-      JSON.stringify({ response: finalContent, thinkingSteps, toolCalls: toolExecutions, proposals }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      JSON.stringify({ status: 'Processing', pending_msg_id: pendingAgentMsg.id }),
+      { status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   } catch (error: any) {
     console.error('Edge Function Error:', error.message)

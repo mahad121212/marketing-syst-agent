@@ -149,6 +149,37 @@ export const App: React.FC = () => {
     setChatSessions((prev) => prev.map((s) => s.id === sessionId ? { ...s, last_viewed_at: now } : s));
   };
 
+  // Realtime Subscription for Background Agent Processing
+  useEffect(() => {
+    if (!currentSessionId) return;
+
+    const channel = supabase
+      .channel('schema-db-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'chat_messages',
+          filter: `session_id=eq.${currentSessionId}`
+        },
+        (payload) => {
+          // Whenever a message is inserted or updated by the Edge Function, reload the UI
+          loadMessagesForSession(currentSessionId);
+          // If the message is from the agent and is COMPLETED or ERROR, stop the loading spinner
+          if (payload.new && payload.new.role === 'agent' && (payload.new.status === 'COMPLETED' || payload.new.status === 'ERROR')) {
+            setIsProcessing(false);
+            setIsAgentRunning(false);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [currentSessionId]);
+
   const handleDeleteSession = async (sessionId: string) => {
     if (!session) return;
     try {
@@ -190,65 +221,18 @@ export const App: React.FC = () => {
     }
 
     try {
+      // We no longer await the final OODA loop result. We just trigger the background Edge Function.
       const { data, error } = await supabase.functions.invoke('agent-loop', {
         body: { prompt: text, session_id: currentSessionId, reasoning_mode: reasoningMode }
       });
 
       if (error) throw error;
+      
+      // The edge function instantly returns a 202 Accepted.
+      // The realtime subscription (useEffect above) will catch the updates and reload the messages!
 
-      const agentMsgId = `agt-${Date.now()}`;
-
-      // Parse the full OODA loop response from the Edge Function
-      const agentResponseContent = data.response || 'No response received.';
-      const thinkingSteps = data.thinkingSteps || [];
-      const toolCalls = (data.toolCalls || []).map((tc: any) => ({
-        name: tc.name,
-        args: tc.args,
-        status: tc.status || 'success',
-      }));
-
-      // Parse proposals from the Edge Function
-      let proposalObj: any = undefined;
-      if (data.proposals && data.proposals.length > 0) {
-        const p = data.proposals[0];
-        if (p.type === 'GOAL_PROPOSAL') {
-          proposalObj = {
-            type: 'GOAL_PROPOSAL',
-            card: p.card,
-          };
-        } else if (p.type === 'CAMPAIGN_CREATED') {
-          proposalObj = {
-            campaignName: p.campaign?.name || 'New Campaign',
-            budget: p.campaign?.daily_budget || 0,
-            objective: p.objective || 'CONVERSIONS',
-            suggestedCopy: p.suggested_ad_copy || '',
-            targetAudience: JSON.stringify(p.campaign?.targeting || {}),
-          };
-        } else if (p.type === 'PROPOSAL') {
-          proposalObj = {
-            campaignName: p.campaign_name || 'Campaign Adjustment',
-            budget: p.new_daily_budget || 0,
-            objective: p.action || 'ADJUSTMENT',
-            suggestedCopy: (p.reasoning || '') + '\n\nExpected Impact: ' + (p.expected_impact || ''),
-            targetAudience: p.action,
-          };
-        }
-      }
-
-      const agentResponse: AgentMessage = {
-        id: agentMsgId,
-        sender: 'agent',
-        content: agentResponseContent,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        thinkingSteps,
-        toolCalls,
-        proposal: proposalObj,
-      };
-
-      setMessages((prev) => [...prev, agentResponse]);
     } catch (err: any) {
       console.error('Agent execution failed:', err);
-      // Try to extract the actual error from the Edge Function response
       let errorDetail = '';
       if (err?.context?.body) {
         try {
