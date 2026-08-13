@@ -150,6 +150,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onSave }) => {
                 cursor: 'pointer'
               }}>
               <optgroup label="OpenRouter Models">
+                <option value="nvidia/nemotron-3-ultra-550b-a55b:free">NVIDIA: Nemotron 3 Ultra (Free)</option>
                 <option value="deepseek/deepseek-v4-flash">DeepSeek: v4 Flash</option>
                 <option value="moonshotai/kimi-k3">Moonshot: Kimi K3</option>
                 <option value="anthropic/claude-opus-5">Anthropic: Claude Opus 5</option>
