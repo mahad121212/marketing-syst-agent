@@ -1355,6 +1355,9 @@ function getLLMRequestDetails(key: string, requestedModel: string) {
   const k = key.trim()
   if (isGeminiKey(k)) {
     let mappedModel = requestedModel.replace('google/', '').trim();
+    if (mappedModel.includes('gemma-4') || mappedModel === 'gemma-4-31b-it') {
+      mappedModel = 'gemma-2-27b-it';
+    }
     if (!mappedModel.includes('gemini') && !mappedModel.includes('gemma')) {
       mappedModel = 'gemini-3.6-flash';
     }
@@ -1367,6 +1370,10 @@ function getLLMRequestDetails(key: string, requestedModel: string) {
       model: mappedModel
     }
   } else {
+    let mappedModel = requestedModel;
+    if (requestedModel === 'google/gemma-4-31b-it') {
+      mappedModel = 'google/gemma-2-27b-it';
+    }
     return {
       url: 'https://openrouter.ai/api/v1/chat/completions',
       headers: {
@@ -1375,7 +1382,7 @@ function getLLMRequestDetails(key: string, requestedModel: string) {
         'HTTP-Referer': 'https://metaagent.ai',
         'X-Title': 'MetaAgent AI'
       },
-      model: requestedModel
+      model: mappedModel
     }
   }
 }
