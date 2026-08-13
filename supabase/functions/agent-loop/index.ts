@@ -1464,10 +1464,15 @@ serve(async (req) => {
           .order('created_at', { ascending: false })
           .limit(20)
 
-        const history = (pastMessages || []).reverse().map(msg => ({
+        let history = (pastMessages || []).reverse().map(msg => ({
           role: msg.role === 'agent' ? 'assistant' : 'user',
           content: msg.content || ''
         }))
+
+        // Prevent Double-Prompt Bug: Remove the current prompt if it was fetched in history
+        if (history.length > 0 && history[history.length - 1].role === 'user' && history[history.length - 1].content === prompt) {
+          history.pop()
+        }
 
     const toolExecutions: any[] = []
     const thinkingSteps: any[] = []
