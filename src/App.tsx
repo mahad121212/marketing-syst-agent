@@ -167,7 +167,8 @@ export const App: React.FC = () => {
           // Whenever a message is inserted or updated by the Edge Function, reload the UI
           loadMessagesForSession(currentSessionId);
           // If the message is from the agent and is COMPLETED or ERROR, stop the loading spinner
-          if (payload.new && payload.new.role === 'agent' && (payload.new.status === 'COMPLETED' || payload.new.status === 'ERROR')) {
+          const newRow = payload.new as any;
+          if (newRow && newRow.role === 'agent' && (newRow.status === 'COMPLETED' || newRow.status === 'ERROR')) {
             setIsProcessing(false);
             setIsAgentRunning(false);
           }
