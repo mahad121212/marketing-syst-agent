@@ -2041,18 +2041,14 @@ serve(async (req) => {
       }
     } // End of processAgentLoop
 
-    // Run the background task without blocking the HTTP response
-    // Supabase standard uses EdgeRuntime.waitUntil if available, or just standard dangling promises.
-    if (typeof (globalThis as any).EdgeRuntime !== 'undefined' && (globalThis as any).EdgeRuntime.waitUntil) {
-      (globalThis as any).EdgeRuntime.waitUntil(processAgentLoop())
-    } else {
-      processAgentLoop().catch(console.error)
-    }
+    // Run the task. We MUST await it so Deno doesn't suspend the isolate.
+    // The frontend relies on Realtime WebSockets to update the UI, so it doesn't matter if this HTTP request takes a long time or times out on the client side.
+    await processAgentLoop()
 
-    // Return 202 Accepted immediately
+    // Return 200 OK
     return new Response(
-      JSON.stringify({ status: 'Processing', pending_msg_id: pendingAgentMsg.id }),
-      { status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      JSON.stringify({ status: 'Success', pending_msg_id: pendingAgentMsg.id }),
+      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   } catch (error: any) {
     console.error('Edge Function Error:', error.message)
