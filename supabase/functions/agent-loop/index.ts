@@ -554,6 +554,83 @@ async function retrieveKnowledge(supabaseClient: any, assessment: any): Promise<
 }
 
 // ============================================================
+// EMERGENT MODE: CHIEF ORCHESTRATOR PROMPT
+// ============================================================
+
+function generateOrchestratorPrompt(businessProfile: any) {
+  let profileContext = 'No business profile available.';
+  if (businessProfile) {
+    profileContext = `Business: ${businessProfile.business_name} | Industry: ${businessProfile.industry} | Market: ${businessProfile.country} (${businessProfile.currency || 'USD'}) | Stage: ${businessProfile.business_stage || 'Unknown'}`;
+  }
+
+  return `You are the Chief Orchestrator of an elite multi-agent marketing intelligence system. You are a senior marketing executive with decades of experience who naturally knows when a situation requires deep strategic analysis, when it requires a quick data check, when it requires a clarifying question, and when it simply requires a warm human response.
+
+## YOUR BUSINESS CLIENT
+${profileContext}
+
+## YOUR ROLE
+Your single job is to READ the user's message and DECIDE the optimal workflow. You have a team of specialized agents available to you. You do NOT execute any of these stages yourself — you simply decide which ones are needed and in what combination.
+
+## YOUR AVAILABLE AGENTS (STAGES)
+
+**PLANNER** — Strategic Planner (Phase 1)
+Deep first-principles thinker. Analyzes business context, market economics, competitive landscape, and formulates an internal strategic roadmap. Use when the user needs strategic direction, campaign planning, or business-level thinking.
+
+**BLUEPRINT** — Pre-Execution Blueprint (Phase 1.5)
+Converts the Planner's raw thinking into a structured, actionable plan with clear deliverables. Use when the Planner has been activated and the request involves execution.
+
+**RESEARCH** — Research Agent (Phase 2)
+Has access to live tools: can fetch campaign hierarchies, check agent memory, retrieve state snapshots, and pull real account data from Meta Ads. Use whenever the response needs to be grounded in the user's actual account data.
+
+**STRATEGY** — Master Strategy Agent (Phase 3)
+Synthesizes planning + research into a cohesive master strategy proposal. The senior strategist who connects all the dots. Use for any request that needs a strategic recommendation.
+
+**REVIEWERS** — Board of 6 Expert Reviewers (Phase 4)
+A panel of domain specialists: CSO Strategy Expert, Lead Copywriter, Creative Director, Creative Diversity Auditor, Compliance & Policy Auditor, and Finance & Performance Expert. They review and critique the strategy proposal in parallel. Use when the stakes are high enough to warrant expert scrutiny — major campaign launches, significant budget decisions, or strategic pivots.
+
+**WORKER** — Execution Worker & Response Agent (Phase 5)
+The hands-on executor. Has access to ALL tools including campaign creation, ad set creation, action cards, monitoring scheduling. Synthesizes everything from upstream stages and produces the final user-facing response. This agent ALWAYS runs for any non-conversational response.
+
+**FORMATTER** — Content Formatter (Phase 6)
+Polishes the Worker's output into a premium, beautifully structured layout. Use for strategic or tactical responses. Skip for conversational or quick data responses.
+
+## YOUR DECISION FRAMEWORK
+
+You are NOT following rigid rules. You are using your professional judgment as a senior marketing executive. Here is how you naturally think about routing:
+
+- **Is this a greeting, thank you, or casual chat?** → Respond directly. No agents needed. Be warm, human, and personable.
+- **Is the request missing critical information that would fundamentally change the strategy?** → Ask ONE precise clarifying question before mobilizing the team. Don't launch a full analysis based on assumptions when a 10-second question could save everyone's time.
+- **Is this a data question or status check?** → Only the Research agent needs to pull account data, and the Worker needs to present it. No need for strategic planning or expert review.
+- **Is this a focused creative, copy, or targeting question?** → Select only the relevant agents. A question about ad copy doesn't need the Finance reviewer.
+- **Is this a full campaign launch, major budget decision, or comprehensive strategy request?** → Bring the full team. These are high-stakes decisions that deserve the complete pipeline.
+
+## OUTPUT FORMAT
+You MUST respond with ONLY a valid JSON object. No markdown, no explanation, no extra text. Just the JSON.
+
+\`\`\`json
+{
+  "routing": "CONVERSATIONAL | CLARIFICATION | DIAGNOSTIC | SELECTIVE | FULL_PIPELINE",
+  "reasoning": "Your 1-2 sentence professional reasoning for why you chose this route",
+  "conversational_response": "Your warm, natural response (ONLY if routing is CONVERSATIONAL)",
+  "clarification_question": "Your precise clarifying question (ONLY if routing is CLARIFICATION)",
+  "stages": ["PLANNER", "BLUEPRINT", "RESEARCH", "STRATEGY", "REVIEWERS", "WORKER", "FORMATTER"],
+  "skip_reasons": {
+    "STAGE_NAME": "Brief reason why this stage was excluded"
+  }
+}
+\`\`\`
+
+### Routing Guidelines (Reference, NOT Rules):
+- **CONVERSATIONAL**: stages should be empty []. conversational_response is required.
+- **CLARIFICATION**: stages should be empty []. clarification_question is required.
+- **DIAGNOSTIC**: stages typically include ["RESEARCH", "WORKER"]. May include STRATEGY if interpretation is needed.
+- **SELECTIVE**: stages include a custom subset. Use your judgment on which experts are relevant.
+- **FULL_PIPELINE**: stages include all: ["PLANNER", "BLUEPRINT", "RESEARCH", "STRATEGY", "REVIEWERS", "WORKER", "FORMATTER"].
+
+CRITICAL: The stages array determines EXACTLY which agents will be activated. The WORKER stage must be included in any non-conversational, non-clarification route since it produces the final response. Be thoughtful — including unnecessary stages wastes time and tokens; excluding necessary stages produces shallow responses.`;
+}
+
+// ============================================================
 // SYSTEM PROMPT GENERATORS FOR DEEP REASONING
 // ============================================================
 function generatePlannerPrompt(businessProfile: any, historical_context?: string) {
@@ -1481,7 +1558,539 @@ serve(async (req) => {
     const situationAssessment = buildSituationAssessment(prompt, businessProfile, campaignCount || 0)
     const knowledgeContext = await retrieveKnowledge(supabaseClient, situationAssessment)
 
-    if (reasoning_mode === 'deep' || true) {
+    if (reasoning_mode === 'emergent') {
+      // ============================================================
+      // EMERGENT MODE: Dynamic Stage Orchestration
+      // ============================================================
+      logStageAudit(thinkingSteps, {
+        phase: 'PHASE_0_KNOWLEDGE',
+        icon: '📚',
+        title: 'Phase 0: Situation Assessment & Knowledge Intelligence',
+        user_input: prompt,
+        raw_output: `Situation Assessment:\n${JSON.stringify(situationAssessment, null, 2)}\n\nRetrieved Marketing Knowledge Context:\n${knowledgeContext || 'No frameworks matched — proceeding with LLM general knowledge.'}`
+      })
+
+      // ===== ORCHESTRATOR: Decide which stages to run =====
+      let orchestratorDecision: any = { routing: 'FULL_PIPELINE', stages: ['PLANNER', 'BLUEPRINT', 'RESEARCH', 'STRATEGY', 'REVIEWERS', 'WORKER', 'FORMATTER'], reasoning: 'Fallback to full pipeline.' }
+      
+      try {
+        const orchestratorPrompt = generateOrchestratorPrompt(businessProfile)
+        const orchestratorInput = `## SITUATION ASSESSMENT\n${JSON.stringify(situationAssessment, null, 2)}\n\n## CONVERSATION HISTORY (Last ${history.length} messages)\n${history.map((m: any) => `${m.role}: ${m.content}`).join('\n').substring(0, 2000)}\n\n## CURRENT USER MESSAGE\n${prompt}`
+        
+        const reqDetails = getLLMRequestDetails(openRouterKey, model)
+        const orchestratorRes = await fetch(reqDetails.url, {
+          method: 'POST',
+          headers: reqDetails.headers,
+          body: JSON.stringify({
+            model: reqDetails.model,
+            max_tokens: 1024,
+            messages: [
+              { role: 'system', content: orchestratorPrompt },
+              { role: 'user', content: orchestratorInput }
+            ]
+          })
+        })
+
+        if (orchestratorRes.ok) {
+          const orchestratorData = await orchestratorRes.json()
+          const rawOrchOutput = orchestratorData.choices[0].message.content || ''
+          
+          // Parse JSON from the orchestrator (handles markdown code blocks)
+          const jsonMatch = rawOrchOutput.match(/\{[\s\S]*\}/)
+          if (jsonMatch) {
+            orchestratorDecision = JSON.parse(jsonMatch[0])
+          }
+
+          logStageAudit(thinkingSteps, {
+            phase: 'PHASE_ORCHESTRATOR',
+            icon: '✨',
+            title: `Chief Orchestrator: Route → ${orchestratorDecision.routing}`,
+            system_prompt: orchestratorPrompt,
+            user_input: orchestratorInput,
+            raw_output: `Routing Decision: ${orchestratorDecision.routing}\nReasoning: ${orchestratorDecision.reasoning}\nStages Selected: ${JSON.stringify(orchestratorDecision.stages || [])}\nSkip Reasons: ${JSON.stringify(orchestratorDecision.skip_reasons || {})}`
+          })
+        }
+      } catch (err: any) {
+        console.error('Orchestrator failed, falling back to full pipeline:', err.message)
+        logStageAudit(thinkingSteps, {
+          phase: 'PHASE_ORCHESTRATOR',
+          icon: '✨',
+          title: 'Chief Orchestrator: Fallback → FULL_PIPELINE',
+          raw_output: `Orchestrator call failed: ${err.message}. Defaulting to full pipeline execution.`
+        })
+      }
+
+      const selectedStages = new Set((orchestratorDecision.stages || []).map((s: string) => s.toUpperCase()))
+      const skipReasons = orchestratorDecision.skip_reasons || {}
+
+      // ===== CONVERSATIONAL ROUTE: Direct response =====
+      if (orchestratorDecision.routing === 'CONVERSATIONAL') {
+        finalContent = orchestratorDecision.conversational_response || "Hey! I'm here and ready. What are we working on today?"
+        logStageAudit(thinkingSteps, {
+          phase: 'PHASE_EMERGENT_CONVERSATIONAL',
+          icon: '💬',
+          title: 'Emergent Route: Conversational Response (All stages bypassed)',
+          status: 'COMPLETED',
+          raw_output: finalContent
+        })
+      }
+      // ===== CLARIFICATION ROUTE: Ask a question before proceeding =====
+      else if (orchestratorDecision.routing === 'CLARIFICATION') {
+        finalContent = orchestratorDecision.clarification_question || "Before I build your strategy, could you share a few more details? Specifically: What product or service are we promoting, and what's your approximate monthly ad budget?"
+        logStageAudit(thinkingSteps, {
+          phase: 'PHASE_EMERGENT_CLARIFICATION',
+          icon: '❓',
+          title: 'Emergent Route: Clarification Needed (Pausing pipeline)',
+          status: 'COMPLETED',
+          raw_output: finalContent
+        })
+      }
+      // ===== DYNAMIC ROUTE: Selectively execute stages =====
+      else {
+        const conversationBrain: any = {
+          goal: prompt,
+          situation_assessment: situationAssessment,
+          currency: businessProfile?.currency || 'PKR',
+          planner_thinking: '',
+          pre_execution_plan: '',
+          evidence: [],
+          research_synthesis: '',
+          strategy_proposal: '',
+          expert_contributions: []
+        }
+
+        const plannerUserMessage = knowledgeContext
+          ? `## SITUATION ASSESSMENT\n${JSON.stringify(situationAssessment, null, 2)}\n\n## MARKETING INTELLIGENCE CONTEXT (Retrieved Frameworks)\nThe following are universal marketing frameworks retrieved based on the user's situation. Use these as reference material to inform your strategic blueprint — they are principles, not commands.\n\n${knowledgeContext}\n\n## USER REQUEST\n${prompt}`
+          : `## SITUATION ASSESSMENT\n${JSON.stringify(situationAssessment, null, 2)}\n\n## USER REQUEST\n${prompt}`
+
+        // ===== DYNAMIC PHASE 1: PLANNER =====
+        if (selectedStages.has('PLANNER')) {
+          try {
+            const reqDetails = getLLMRequestDetails(openRouterKey, model)
+            const plannerSystemPrompt = generatePlannerPrompt(businessProfile, historical_context)
+            const plannerRes = await fetch(reqDetails.url, {
+              method: 'POST',
+              headers: reqDetails.headers,
+              body: JSON.stringify({
+                model: reqDetails.model,
+                max_tokens: maxTokens,
+                messages: [
+                  { role: 'system', content: plannerSystemPrompt },
+                  ...history,
+                  { role: 'user', content: plannerUserMessage }
+                ]
+              })
+            })
+            if (plannerRes.ok) {
+              const plannerData = await plannerRes.json()
+              conversationBrain.planner_thinking = plannerData.choices[0].message.content || ''
+              logStageAudit(thinkingSteps, {
+                phase: 'PHASE_1_PLANNER',
+                icon: '💭',
+                title: 'Phase 1: Strategic Planner Reasoning',
+                system_prompt: plannerSystemPrompt,
+                user_input: plannerUserMessage,
+                raw_output: conversationBrain.planner_thinking
+              })
+            }
+          } catch (err: any) {
+            console.error('Emergent Planner failed:', err.message)
+            logStageAudit(thinkingSteps, {
+              phase: 'PHASE_1_PLANNER',
+              icon: '💭',
+              title: 'Phase 1: Strategic Planner (Error)',
+              raw_output: `Planner call failed: ${err.message}`
+            })
+          }
+        } else {
+          logStageAudit(thinkingSteps, {
+            phase: 'PHASE_1_PLANNER',
+            icon: '💭',
+            title: 'Phase 1: Strategic Planner',
+            status: 'SKIPPED',
+            raw_output: `Orchestrator Decision: ${skipReasons.PLANNER || 'Not required for this request type.'}`
+          })
+        }
+
+        // ===== DYNAMIC PHASE 1.5: BLUEPRINT =====
+        if (selectedStages.has('BLUEPRINT')) {
+          const planGenSystemPrompt = generatePreExecutionPlanGeneratorPrompt(businessProfile)
+          const planGenInput = `## Planner's Deep Thinking\n${conversationBrain.planner_thinking || 'No planner output (stage was skipped).'}\n\n## User's Original Prompt\n${prompt}`
+          try {
+            const reqDetails = getLLMRequestDetails(openRouterKey, model)
+            const planGenRes = await fetch(reqDetails.url, {
+              method: 'POST',
+              headers: reqDetails.headers,
+              body: JSON.stringify({
+                model: reqDetails.model,
+                max_tokens: maxTokens,
+                messages: [
+                  { role: 'system', content: planGenSystemPrompt },
+                  { role: 'user', content: planGenInput }
+                ]
+              })
+            })
+            if (planGenRes.ok) {
+              const data = await planGenRes.json()
+              conversationBrain.pre_execution_plan = data.choices[0].message.content || conversationBrain.planner_thinking
+              logStageAudit(thinkingSteps, {
+                phase: 'PHASE_1_5_BLUEPRINT',
+                icon: '🛡️',
+                title: 'Phase 1.5: Pre-Execution Strategic Blueprint',
+                system_prompt: planGenSystemPrompt,
+                user_input: planGenInput,
+                raw_output: conversationBrain.pre_execution_plan
+              })
+            }
+          } catch (err: any) {
+            console.error('Emergent Blueprint failed:', err.message)
+            conversationBrain.pre_execution_plan = conversationBrain.planner_thinking
+          }
+        } else {
+          logStageAudit(thinkingSteps, {
+            phase: 'PHASE_1_5_BLUEPRINT',
+            icon: '🛡️',
+            title: 'Phase 1.5: Pre-Execution Strategic Blueprint',
+            status: 'SKIPPED',
+            raw_output: `Orchestrator Decision: ${skipReasons.BLUEPRINT || 'Not required for this request type.'}`
+          })
+          conversationBrain.pre_execution_plan = conversationBrain.planner_thinking
+        }
+
+        // ===== DYNAMIC PHASE 2: RESEARCH =====
+        if (selectedStages.has('RESEARCH')) {
+          const researchSystemPrompt = generateResearchAgentPrompt(businessProfile) + `\n\nSTRATEGIC PLAN TO RESEARCH:\n${conversationBrain.pre_execution_plan || prompt}`
+          const researchMessages: any[] = [
+            { role: 'system', content: researchSystemPrompt },
+            ...history
+          ]
+
+          for (let i = 0; i < 4; i++) {
+            const reqDetails = getLLMRequestDetails(openRouterKey, model)
+            const researchRes = await fetch(reqDetails.url, {
+              method: 'POST',
+              headers: reqDetails.headers,
+              body: JSON.stringify({
+                model: reqDetails.model,
+                max_tokens: maxTokens,
+                messages: researchMessages,
+                tools: AGENT_TOOLS.filter(t => ['get_campaign_hierarchy', 'check_agent_memory', 'get_state_snapshots'].includes(t.function.name)),
+                tool_choice: 'auto'
+              })
+            })
+
+            if (!researchRes.ok) break
+            const aiData = await researchRes.json()
+            const assistantMessage = aiData.choices[0].message
+            researchMessages.push(assistantMessage)
+
+            if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
+              for (const toolCall of assistantMessage.tool_calls) {
+                const toolName = toolCall.function.name
+                let toolArgs = {}
+                try { toolArgs = JSON.parse(toolCall.function.arguments || '{}') } catch {}
+
+                const toolResult = await executeTool(
+                  toolName,
+                  toolArgs,
+                  supabaseClient,
+                  user.id,
+                  session_id,
+                  !!is_background,
+                  settings?.meta_access_token || undefined,
+                  settings?.meta_ad_account_id || undefined
+                )
+
+                let researchText = assistantMessage.content || ''
+                logStageAudit(thinkingSteps, {
+                  phase: `PHASE_2_TOOL_${toolName.toUpperCase()}`,
+                  icon: '🛠️',
+                  title: `Phase 2 Tool Execution: ${toolName}`,
+                  status: 'EXECUTED',
+                  tool_name: toolName,
+                  tool_args: toolArgs,
+                  tool_result: toolResult,
+                  raw_output: (researchText ? `Agent Reasoning:\n${researchText}\n\nTool Result:\n` : '') + toolResult
+                })
+
+                try {
+                  const parsed = JSON.parse(toolResult)
+                  if (parsed.type === 'PROPOSAL' || parsed.type === 'GOAL_PROPOSAL') proposals.push(parsed)
+                } catch {}
+
+                toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult, status: 'success' })
+                conversationBrain.evidence.push({ tool: toolName, args: toolArgs, result: toolResult, reasoning: researchText })
+                researchMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResult })
+              }
+            } else {
+              conversationBrain.research_synthesis = assistantMessage.content || ''
+              logStageAudit(thinkingSteps, {
+                phase: 'PHASE_2_SYNTHESIS',
+                icon: '🔬',
+                title: 'Phase 2: Research Agent Synthesis',
+                raw_output: conversationBrain.research_synthesis
+              })
+              break
+            }
+          }
+        } else {
+          logStageAudit(thinkingSteps, {
+            phase: 'PHASE_2_RESEARCH',
+            icon: '🔬',
+            title: 'Phase 2: Research Agent',
+            status: 'SKIPPED',
+            raw_output: `Orchestrator Decision: ${skipReasons.RESEARCH || 'No live data lookup needed for this request.'}`
+          })
+        }
+
+        // ===== DYNAMIC PHASE 3: STRATEGY =====
+        if (selectedStages.has('STRATEGY')) {
+          const strategySystemPrompt = generateStrategyAgentPrompt(businessProfile)
+          const strategyInput = `## COMPLETE CONTEXT CHAIN:\n\n### 1. User's Original Request\n${prompt}\n\n### 2. Strategic Planner's First-Principles Thinking\n${conversationBrain.planner_thinking || '(Planner was skipped by Orchestrator)'}\n\n### 3. Pre-Execution Plan Blueprint\n${conversationBrain.pre_execution_plan || '(Blueprint was skipped by Orchestrator)'}\n\n### 4. Research Agent's Synthesis\n${conversationBrain.research_synthesis || '(Research was skipped by Orchestrator)'}\n\n### 5. Research Evidence Data (GROUND TRUTH)\n${JSON.stringify(conversationBrain.evidence, null, 2)}\n\n### 6. Knowledge Context\n${knowledgeContext}\n\nCRITICAL INSTRUCTION: The 'Research Agent Synthesis' is a human-readable summary. If it contradicts the raw JSON 'Research Evidence Data' in any way, you MUST trust the JSON data as the absolute ground truth.`
+          try {
+            const reqDetails = getLLMRequestDetails(openRouterKey, model)
+            const strategyRes = await fetch(reqDetails.url, {
+              method: 'POST',
+              headers: reqDetails.headers,
+              body: JSON.stringify({
+                model: reqDetails.model,
+                max_tokens: maxTokens,
+                messages: [
+                  { role: 'system', content: strategySystemPrompt },
+                  { role: 'user', content: strategyInput }
+                ]
+              })
+            })
+            if (strategyRes.ok) {
+              const data = await strategyRes.json()
+              conversationBrain.strategy_proposal = data.choices[0].message.content || conversationBrain.pre_execution_plan
+              logStageAudit(thinkingSteps, {
+                phase: 'PHASE_3_MASTER_STRATEGY',
+                icon: '🧠',
+                title: 'Phase 3: Master Strategy Proposal',
+                system_prompt: strategySystemPrompt,
+                user_input: strategyInput,
+                raw_output: conversationBrain.strategy_proposal
+              })
+            }
+          } catch (err: any) {
+            console.error('Emergent Strategy Agent failed:', err.message)
+            conversationBrain.strategy_proposal = conversationBrain.pre_execution_plan
+          }
+        } else {
+          logStageAudit(thinkingSteps, {
+            phase: 'PHASE_3_MASTER_STRATEGY',
+            icon: '🧠',
+            title: 'Phase 3: Master Strategy Agent',
+            status: 'SKIPPED',
+            raw_output: `Orchestrator Decision: ${skipReasons.STRATEGY || 'No strategic synthesis required for this request.'}`
+          })
+          conversationBrain.strategy_proposal = conversationBrain.pre_execution_plan || conversationBrain.research_synthesis
+        }
+
+        // ===== DYNAMIC PHASE 4: REVIEWERS =====
+        if (selectedStages.has('REVIEWERS')) {
+          const reviewerConfigs = [
+            { id: 'strategy', label: '🎯 CSO Strategy Expert', promptFn: generateStrategyReviewerPrompt },
+            { id: 'copy', label: '✍️ Lead Copywriting Expert', promptFn: generateCopyReviewerPrompt },
+            { id: 'creative', label: '🎨 Creative Director Expert', promptFn: generateCreativeReviewerPrompt },
+            { id: 'diversity', label: '🎭 Creative Diversity Auditor', promptFn: generateDiversityReviewerPrompt },
+            { id: 'compliance', label: '🛡️ Operations & Policy Auditor', promptFn: generateComplianceReviewerPrompt },
+            { id: 'performance', label: '📊 Finance & Performance Expert', promptFn: generatePerformanceReviewerPrompt }
+          ]
+
+          const reviewerPromises = reviewerConfigs.map(async (config) => {
+            const sysPrompt = config.promptFn(businessProfile)
+            const usrInput = `User's Request: ${prompt}\n\nStrategy Proposal to Review:\n${conversationBrain.strategy_proposal}\n\nResearch Context (Synthesis):\n${conversationBrain.research_synthesis}`
+            try {
+              const reqDetails = getLLMRequestDetails(openRouterKey, model)
+              const reviewerRes = await fetch(reqDetails.url, {
+                method: 'POST',
+                headers: reqDetails.headers,
+                body: JSON.stringify({
+                  model: reqDetails.model,
+                  max_tokens: reviewerMaxTokens,
+                  messages: [
+                    { role: 'system', content: sysPrompt },
+                    { role: 'user', content: usrInput }
+                  ]
+                })
+              })
+              if (!reviewerRes.ok) throw new Error(await reviewerRes.text())
+              const data = await reviewerRes.json()
+              const rawReview = data.choices[0].message.content || 'Validated. No concerns.'
+              return { role: config.id, label: config.label, sysPrompt, usrInput, raw_review: rawReview }
+            } catch (err: any) {
+              return { role: config.id, label: config.label, sysPrompt, usrInput, raw_review: 'Validated. No concerns.' }
+            }
+          })
+
+          const reviews = await Promise.all(reviewerPromises)
+          for (const r of reviews) {
+            conversationBrain.expert_contributions.push({ expert: r.label, review: r.raw_review })
+            logStageAudit(thinkingSteps, {
+              phase: `PHASE_4_REVIEWER_${r.role.toUpperCase()}`,
+              icon: '📋',
+              title: `Phase 4 Reviewer: ${r.label}`,
+              system_prompt: r.sysPrompt,
+              user_input: r.usrInput,
+              raw_output: r.raw_review
+            })
+          }
+        } else {
+          logStageAudit(thinkingSteps, {
+            phase: 'PHASE_4_EXPERT_REVIEWERS',
+            icon: '📋',
+            title: 'Phase 4: Board of Expert Reviewers',
+            status: 'SKIPPED',
+            raw_output: `Orchestrator Decision: ${skipReasons.REVIEWERS || 'Expert review panel not required for this request type.'}`
+          })
+        }
+
+        // ===== DYNAMIC PHASE 5: WORKER (Always runs for non-conversational routes) =====
+        if (selectedStages.has('WORKER')) {
+          const responseWorkerPrompt = generateSystemPrompt(businessProfile, historical_context) +
+            `\n\n## SHARED WORKING MEMORY (BLACKBOARD STATE):\n` +
+            `- User's Original Request: ${prompt}\n\n` +
+            (conversationBrain.strategy_proposal ? `- Core Strategy Proposal:\n${conversationBrain.strategy_proposal}\n\n` : '') +
+            (conversationBrain.expert_contributions.length > 0 ? `- Expert Contributions & Reviews:\n${conversationBrain.expert_contributions.map((e: any) => `**${e.expert}:** ${e.review}`).join('\n\n')}\n\n` : '') +
+            `## CRITICAL EXECUTION RULES:\n` +
+            `1. PROPORTIONAL RESPONSE: If the user's original request is a data/observation question, LEAD with a clean, plain data presentation of what exists in the account.\n` +
+            `2. NO REDUNDANT TOOL CALLS: The Research Agent has already gathered all live account data. Only use creation/action tools if needed.\n` +
+            `3. SYNTHESIZE: Combine research evidence, core strategy, and expert contributions into your final response.\n` +
+            `4. HUMAN PARTNER OPENER & TOOL CONFIRMATION (CRITICAL):\n` +
+            `   - ALWAYS open your final response with a warm, direct 1-sentence confirmation line connecting with the user as their personal Media Buyer.\n` +
+            `   - Never start cold with raw section headers or tables. Acknowledge the user's emotion/need first, confirm any tool action taken, then deliver the breakdown.\n` +
+            `5. ACTION CARD AWARENESS: When you call a creation tool (create_campaign, propose_action_card), the system automatically generates ONE UI card for the user to approve. After calling the tool, tell the user to click Approve. If the user replies confirming or saying yes, they mean they will approve it in the UI — do NOT call the same creation tool again for the same entity.\n` +
+            `6. ABSOLUTE OBEDIENCE TO MASTER STRATEGY (CRITICAL): If the Core Strategy Proposal advises AGAINST a specific action, you MUST NOT call the tool to execute it! Explain the reasoning to the user instead.\n` +
+            `7. CONFLICT RESOLUTION PROTOCOL: If Expert Contributions disagree, resolve using: 1) Finance & Performance (budget/CPA constraints are absolute). 2) Compliance & Policy (bans are absolute). 3) Strategy. 4) Creative/Copy.`;
+
+          const responseMessages: any[] = [
+            { role: 'system', content: responseWorkerPrompt },
+            ...history
+          ]
+
+          const workerRes = await fetch(getLLMRequestDetails(openRouterKey, model).url, {
+            method: 'POST',
+            headers: getLLMRequestDetails(openRouterKey, model).headers,
+            body: JSON.stringify({
+              model: getLLMRequestDetails(openRouterKey, model).model,
+              max_tokens: maxTokens,
+              messages: responseMessages,
+              tools: ACTION_TOOLS,
+              tool_choice: 'auto'
+            })
+          })
+
+          if (workerRes.ok) {
+            const aiData = await workerRes.json()
+            const assistantMsg = aiData.choices[0].message
+            finalContent = assistantMsg.content || ''
+
+            if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0) {
+              for (const toolCall of assistantMsg.tool_calls) {
+                const toolName = toolCall.function.name
+                let toolArgs = {}
+                try { toolArgs = JSON.parse(toolCall.function.arguments || '{}') } catch {}
+                const toolResult = await executeTool(
+                  toolName,
+                  toolArgs,
+                  supabaseClient,
+                  user.id,
+                  session_id,
+                  !!is_background,
+                  settings?.meta_access_token || undefined,
+                  settings?.meta_ad_account_id || undefined
+                )
+                logStageAudit(thinkingSteps, {
+                  phase: `PHASE_5_TOOL_${toolName.toUpperCase()}`,
+                  icon: '🛠️',
+                  title: `Phase 5 Execution Tool: ${toolName}`,
+                  status: 'EXECUTED',
+                  tool_name: toolName,
+                  tool_args: toolArgs,
+                  tool_result: toolResult,
+                  raw_output: toolResult
+                })
+                toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult, status: 'success' })
+              }
+            }
+          }
+
+          logStageAudit(thinkingSteps, {
+            phase: 'PHASE_5_RESPONSE_WORKER',
+            icon: '⚡',
+            title: 'Phase 5: Response Agent & Execution Worker Synthesis',
+            system_prompt: responseWorkerPrompt,
+            user_input: `Prompt: ${prompt}\n\nCore Strategy Proposal:\n${conversationBrain.strategy_proposal}`,
+            raw_output: finalContent || 'Executing worker tools and generating strategy response.'
+          })
+
+          if (!finalContent || finalContent.trim().length === 0) {
+            finalContent = conversationBrain.strategy_proposal || conversationBrain.pre_execution_plan || "Strategy successfully formulated."
+          }
+
+          if (toolExecutions.length > 0) {
+            const toolSummary = toolExecutions.map(t => `- **Executed ${t.name}**: ${t.result}`).join('\n')
+            finalContent += `\n\n### 🛠️ Execution & Action Summary\n${toolSummary}`
+          }
+        } else {
+          // Worker skipped — use strategy proposal or research synthesis as final content
+          finalContent = conversationBrain.strategy_proposal || conversationBrain.research_synthesis || conversationBrain.planner_thinking || 'Analysis complete.'
+          logStageAudit(thinkingSteps, {
+            phase: 'PHASE_5_RESPONSE_WORKER',
+            icon: '⚡',
+            title: 'Phase 5: Response Agent & Execution Worker',
+            status: 'SKIPPED',
+            raw_output: `Orchestrator Decision: ${skipReasons.WORKER || 'Worker not required.'}`
+          })
+        }
+
+        // ===== DYNAMIC PHASE 6: FORMATTER =====
+        if (selectedStages.has('FORMATTER')) {
+          try {
+            const reqDetails = getLLMRequestDetails(openRouterKey, model)
+            const formatterRes = await fetch(reqDetails.url, {
+              method: 'POST',
+              headers: reqDetails.headers,
+              body: JSON.stringify({
+                model: reqDetails.model,
+                max_tokens: maxTokens,
+                messages: [
+                  { role: 'system', content: generateFormatterPrompt() + "\n\nCRITICAL RULE: If the input contains an 'Execution & Action Summary' section with tool executions, you MUST preserve it exactly as written at the end of your response." },
+                  { role: 'user', content: `Structure and format this content beautifully:\n\n${finalContent}` }
+                ]
+              })
+            })
+            if (formatterRes.ok) {
+              const data = await formatterRes.json()
+              const formatted = data.choices[0].message.content || ''
+              if (formatted.trim().length > 20) {
+                finalContent = formatted
+              }
+            }
+          } catch (err: any) {
+            console.error('Emergent Formatter failed:', err.message)
+          }
+
+          logStageAudit(thinkingSteps, {
+            phase: 'PHASE_6_FORMATTER',
+            icon: '✍️',
+            title: 'Phase 6: Content Formatter',
+            status: 'COMPLETED',
+            raw_output: 'Response formatted into premium layout.'
+          })
+        } else {
+          logStageAudit(thinkingSteps, {
+            phase: 'PHASE_6_FORMATTER',
+            icon: '✍️',
+            title: 'Phase 6: Content Formatter',
+            status: 'SKIPPED',
+            raw_output: `Orchestrator Decision: ${skipReasons.FORMATTER || 'Formatting not required for this response type.'}`
+          })
+        }
+      } // End of dynamic route (non-conversational, non-clarification)
+    } else if (reasoning_mode === 'deep') {
       logStageAudit(thinkingSteps, {
         phase: 'PHASE_0_KNOWLEDGE',
         icon: '📚',

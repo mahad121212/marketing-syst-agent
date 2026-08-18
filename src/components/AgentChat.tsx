@@ -4,7 +4,7 @@ import { AgentMessage } from '../types';
 import { supabase } from '../lib/supabase';
 import { FormattedMarkdown } from './FormattedMarkdown';
 
-const LiveProcessLoader: React.FC<{ reasoningMode: 'fast' | 'deep' }> = ({ reasoningMode }) => {
+const LiveProcessLoader: React.FC<{ reasoningMode: 'fast' | 'deep' | 'emergent' }> = ({ reasoningMode }) => {
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
 
   const deepSteps = [
@@ -30,7 +30,14 @@ const LiveProcessLoader: React.FC<{ reasoningMode: 'fast' | 'deep' }> = ({ reaso
     { title: '⚙️ Iteration 4: Act', desc: 'Finalizing response advice...' }
   ];
 
-  const steps = reasoningMode === 'deep' ? deepSteps : fastSteps;
+  const emergentSteps = [
+    { title: '✨ Chief Orchestrator', desc: 'Analyzing prompt intent and deciding optimal workflow depth...' },
+    { title: '🔀 Dynamic Routing', desc: 'Selecting which agents to activate based on your request...' },
+    { title: '🧠 Activating selected agents', desc: 'Running only the stages your request actually needs...' },
+    { title: '⚡ Synthesizing response', desc: 'Combining agent outputs into your final answer...' },
+  ];
+
+  const steps = reasoningMode === 'deep' ? deepSteps : reasoningMode === 'emergent' ? emergentSteps : fastSteps;
 
   useEffect(() => {
     setCurrentStepIndex(0);
@@ -39,7 +46,7 @@ const LiveProcessLoader: React.FC<{ reasoningMode: 'fast' | 'deep' }> = ({ reaso
   useEffect(() => {
     const interval = setInterval(() => {
       setCurrentStepIndex((prev) => (prev < steps.length - 1 ? prev + 1 : prev));
-    }, reasoningMode === 'deep' ? 3000 : 2000);
+    }, reasoningMode === 'deep' ? 3000 : reasoningMode === 'emergent' ? 2500 : 2000);
     return () => clearInterval(interval);
   }, [steps.length, reasoningMode]);
 
@@ -75,7 +82,7 @@ const LiveProcessLoader: React.FC<{ reasoningMode: 'fast' | 'deep' }> = ({ reaso
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <div style={{ width: '16px', height: '16px', borderRadius: '50%', border: '2px solid rgba(6, 182, 212, 0.2)', borderTopColor: '#06b6d4', animation: 'spin-loader 1s linear infinite' }} />
             <span style={{ fontSize: '13px', color: '#38bdf8', fontWeight: 600 }}>
-              {reasoningMode === 'deep' ? 'Deep Reasoning Pipeline Active (12 Stages)' : 'Fast Mode Agent active...'}
+              {reasoningMode === 'deep' ? 'Deep Reasoning Pipeline Active (12 Stages)' : reasoningMode === 'emergent' ? 'Emergent Thinking — AI Deciding Workflow...' : 'Fast Mode Agent active...'}
             </span>
           </div>
 
@@ -145,8 +152,8 @@ interface AgentChatProps {
   onNewChat: () => void;
   onSwitchSession: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
-  reasoningMode: 'fast' | 'deep';
-  setReasoningMode: React.Dispatch<React.SetStateAction<'fast' | 'deep'>>;
+  reasoningMode: 'fast' | 'deep' | 'emergent';
+  setReasoningMode: React.Dispatch<React.SetStateAction<'fast' | 'deep' | 'emergent'>>;
 }
 
 export const AgentChat: React.FC<AgentChatProps> = ({
@@ -1190,6 +1197,27 @@ export const AgentChat: React.FC<AgentChatProps> = ({
               </button>
               <button
                 type="button"
+                onClick={() => setReasoningMode('emergent')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '5px 12px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  backgroundColor: reasoningMode === 'emergent' ? 'rgba(16, 185, 129, 0.15)' : 'transparent',
+                  color: reasoningMode === 'emergent' ? '#34d399' : 'rgba(255, 255, 255, 0.4)',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                }}
+              >
+                <Target style={{ width: '12px', height: '12px', opacity: reasoningMode === 'emergent' ? 1 : 0.6 }} />
+                <span>Emergent</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => setReasoningMode('deep')}
                 style={{
                   display: 'flex',
@@ -1211,6 +1239,23 @@ export const AgentChat: React.FC<AgentChatProps> = ({
               </button>
             </div>
             
+            {reasoningMode === 'emergent' && (
+              <span style={{
+                fontSize: '11px',
+                color: '#34d399',
+                backgroundColor: 'rgba(16, 185, 129, 0.08)',
+                border: '1px solid rgba(16, 185, 129, 0.2)',
+                padding: '3px 8px',
+                borderRadius: '6px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                marginLeft: '8px',
+              }}>
+                <Target style={{ width: '11px', height: '11px' }} />
+                AI dynamically decides reasoning depth
+              </span>
+            )}
             {reasoningMode === 'deep' && (
               <span style={{
                 fontSize: '11px',

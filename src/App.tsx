@@ -20,7 +20,7 @@ export const App: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [chatSessions, setChatSessions] = useState<{ id: string; title: string; updated_at: string }[]>([]);
-  const [reasoningMode, setReasoningMode] = useState<'fast' | 'deep'>('fast');
+  const [reasoningMode, setReasoningMode] = useState<'fast' | 'deep' | 'emergent'>('emergent');
 
   // Initial Campaigns (Live mode — no mock data)
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
