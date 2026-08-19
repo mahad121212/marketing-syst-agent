@@ -1577,6 +1577,77 @@ function getLLMRequestDetails(key: string, requestedModel: string) {
 }
 
 // ============================================================
+// ROLLING CONTEXT MEMORY: Conversation Summarizer
+// ============================================================
+
+const CONVERSATION_SUMMARY_PROMPT = `You are a conversation memory compressor. Your job is to read older chat messages and produce a compact, high-signal summary that preserves everything a senior marketing strategist would need to continue the conversation without missing a beat.
+
+## WHAT TO EXTRACT (in order of importance):
+
+1. **KEY DECISIONS & AGREEMENTS**: What strategies were agreed on? What approaches were rejected? What did the user explicitly approve or deny?
+2. **BUSINESS CONTEXT ESTABLISHED**: Product details, budget constraints, target market, business stage, competitive landscape — anything the user shared about their situation.
+3. **USER PREFERENCES & PERSONALITY**: How does the user communicate? Do they want brutal honesty? Are they frustrated? Do they prefer data-heavy or concise responses? What mode do they prefer?
+4. **ACTIVE STRATEGY/PLAN**: What's the current plan of action? What's being executed right now? What's the next step?
+5. **THINGS NOT TO REPEAT**: What approaches were already tried and failed? What suggestions annoyed the user? What topics are resolved and don't need revisiting?
+6. **UNRESOLVED QUESTIONS**: Any open threads, pending decisions, or follow-ups the user is waiting for.
+
+## RULES:
+- Be CONCISE. Target 300-500 words maximum.
+- Use bullet points, not paragraphs.
+- Preserve specific numbers, names, and data points (budgets, CPAs, campaign names, etc.)
+- If an existing summary is provided, MERGE it with the new messages — don't lose prior context.
+- Write in third person ("The user wants...", "They rejected...")
+- Focus on ACTIONABLE context, not pleasantries.
+
+## OUTPUT FORMAT:
+Return ONLY the summary text. No JSON, no markdown headers, no meta-commentary.`;
+
+async function generateConversationSummary(
+  olderMessages: any[],
+  existingSummary: string,
+  openRouterKey: string,
+  model: string
+): Promise<string> {
+  try {
+    const messagesText = olderMessages
+      .map((m: any) => `${m.role === 'agent' ? 'AGENT' : 'USER'}: ${(m.content || '').substring(0, 500)}`)
+      .join('\n\n')
+
+    const userInput = existingSummary
+      ? `## EXISTING CONVERSATION MEMORY (from earlier turns)\n${existingSummary}\n\n## NEW MESSAGES TO ABSORB (merge with above)\n${messagesText}`
+      : `## MESSAGES TO SUMMARIZE\n${messagesText}`
+
+    const reqDetails = getLLMRequestDetails(openRouterKey, model)
+    const res = await fetch(reqDetails.url, {
+      method: 'POST',
+      headers: reqDetails.headers,
+      body: JSON.stringify({
+        model: reqDetails.model,
+        max_tokens: 512,
+        messages: [
+          { role: 'system', content: CONVERSATION_SUMMARY_PROMPT },
+          { role: 'user', content: userInput }
+        ]
+      })
+    })
+
+    if (res.ok) {
+      const data = await res.json()
+      const summary = data.choices?.[0]?.message?.content || ''
+      if (summary.trim().length > 20) {
+        return summary.trim()
+      }
+    }
+
+    // Fallback: return existing summary unchanged
+    return existingSummary || ''
+  } catch (err: any) {
+    console.error('Conversation summary generation failed:', err.message)
+    return existingSummary || ''
+  }
+}
+
+// ============================================================
 // MAIN HANDLER
 // ============================================================
 serve(async (req) => {
@@ -1644,6 +1715,11 @@ serve(async (req) => {
     // Define the async background processor
     const processAgentLoop = async () => {
       try {
+        // ============================================================
+        // ROLLING CONTEXT MEMORY: Smart History Management
+        // ============================================================
+        const RECENT_WINDOW = 12 // Keep 12 most recent messages as raw context
+
         const { data: pastMessages } = await supabaseClient
           .from('chat_messages')
           .select('role, content')
@@ -1651,16 +1727,87 @@ serve(async (req) => {
           .eq('user_id', user.id)
           .neq('id', pendingAgentMsg.id) // Exclude the pending message
           .order('created_at', { ascending: false })
-          .limit(20)
+          .limit(30) // Fetch more messages for summarization
 
-        let history = (pastMessages || []).reverse().map(msg => ({
-          role: msg.role === 'agent' ? 'assistant' : 'user',
-          content: msg.content || ''
-        }))
+        let allMessages = (pastMessages || []).reverse()
 
-        // Prevent Double-Prompt Bug: Remove the current prompt if it was fetched in history
-        if (history.length > 0 && history[history.length - 1].role === 'user' && history[history.length - 1].content === prompt) {
-          history.pop()
+        // Prevent Double-Prompt Bug: Remove the current prompt if it was fetched
+        if (allMessages.length > 0 && allMessages[allMessages.length - 1].role === 'user' && allMessages[allMessages.length - 1].content === prompt) {
+          allMessages.pop()
+        }
+
+        // Fetch existing conversation summary for this session
+        const { data: existingSummaryRow } = await supabaseClient
+          .from('conversation_summaries')
+          .select('summary, message_count')
+          .eq('session_id', session_id)
+          .single()
+
+        let conversationMemory = existingSummaryRow?.summary || ''
+        let history: any[] = []
+
+        if (allMessages.length > RECENT_WINDOW) {
+          // Split: older messages get compressed, recent stay raw
+          const olderMessages = allMessages.slice(0, -RECENT_WINDOW)
+          const recentMessages = allMessages.slice(-RECENT_WINDOW)
+
+          // Generate/update summary from older messages
+          const newSummary = await generateConversationSummary(
+            olderMessages,
+            conversationMemory,
+            openRouterKey,
+            model
+          )
+
+          // Persist the updated summary
+          if (newSummary && newSummary.length > 20) {
+            conversationMemory = newSummary
+            await supabaseClient.from('conversation_summaries').upsert({
+              session_id,
+              user_id: user.id,
+              summary: newSummary,
+              message_count: allMessages.length,
+              last_summarized_at: new Date().toISOString()
+            }, { onConflict: 'session_id' }).then((res: any) => {
+              if (res.error) console.error('Failed to persist conversation summary:', res.error.message)
+            })
+          }
+
+          // Build history: recent messages only (summary injected per-stage)
+          history = recentMessages.map((msg: any) => ({
+            role: msg.role === 'agent' ? 'assistant' : 'user',
+            content: msg.content || ''
+          }))
+        } else {
+          // Short conversation — use all messages directly
+          history = allMessages.map((msg: any) => ({
+            role: msg.role === 'agent' ? 'assistant' : 'user',
+            content: msg.content || ''
+          }))
+        }
+
+        // Helper: Build stage-specific history with memory injection
+        function buildStageHistory(stageType: 'orchestrator' | 'planner' | 'research' | 'worker'): any[] {
+          const memoryPrefix = conversationMemory
+            ? [{ role: 'user', content: `[CONVERSATION MEMORY — Summary of earlier discussion]\n${conversationMemory}` }, { role: 'assistant', content: 'Understood. I have full context from our earlier conversation. Continuing from where we left off.' }]
+            : []
+
+          switch (stageType) {
+            case 'orchestrator':
+              // Orchestrator gets summary + last 6 messages (routing decisions only)
+              return [...memoryPrefix, ...history.slice(-6)]
+            case 'planner':
+              // Planner gets summary + last 6 messages (strategic context)
+              return [...memoryPrefix, ...history.slice(-6)]
+            case 'research':
+              // Research gets last 4 messages only (what data to look up)
+              return [...memoryPrefix, ...history.slice(-4)]
+            case 'worker':
+              // Worker gets summary + all recent messages (conversational continuity)
+              return [...memoryPrefix, ...history]
+            default:
+              return [...memoryPrefix, ...history]
+          }
         }
 
     const toolExecutions: any[] = []
@@ -1693,7 +1840,8 @@ serve(async (req) => {
       
       try {
         const orchestratorPrompt = generateOrchestratorPrompt(businessProfile)
-        const orchestratorInput = `## SITUATION ASSESSMENT\n${JSON.stringify(situationAssessment, null, 2)}\n\n## CONVERSATION HISTORY (Last ${history.length} messages)\n${history.map((m: any) => `${m.role}: ${m.content}`).join('\n').substring(0, 2000)}\n\n## CURRENT USER MESSAGE\n${prompt}`
+        const orchestratorHistory = buildStageHistory('orchestrator')
+        const orchestratorInput = `## SITUATION ASSESSMENT\n${JSON.stringify(situationAssessment, null, 2)}\n\n## CONVERSATION MEMORY (Full Arc)\n${conversationMemory || 'New conversation — no prior context.'}\n\n## RECENT CONVERSATION (Last ${orchestratorHistory.length} messages)\n${orchestratorHistory.filter((m: any) => m.role !== 'system').map((m: any) => `${m.role}: ${m.content}`).join('\n').substring(0, 4000)}\n\n## CURRENT USER MESSAGE\n${prompt}`
         
         const reqDetails = getLLMRequestDetails(openRouterKey, model)
         const orchestratorRes = await fetch(reqDetails.url, {
@@ -1794,7 +1942,7 @@ serve(async (req) => {
                 max_tokens: maxTokens,
                 messages: [
                   { role: 'system', content: plannerSystemPrompt },
-                  ...history,
+                  ...buildStageHistory('planner'),
                   { role: 'user', content: plannerUserMessage }
                 ]
               })
@@ -1880,7 +2028,7 @@ serve(async (req) => {
           const researchSystemPrompt = generateResearchAgentPrompt(businessProfile) + `\n\nSTRATEGIC PLAN TO RESEARCH:\n${conversationBrain.pre_execution_plan || prompt}`
           const researchMessages: any[] = [
             { role: 'system', content: researchSystemPrompt },
-            ...history
+            ...buildStageHistory('research')
           ]
 
           for (let i = 0; i < 4; i++) {
@@ -2085,7 +2233,7 @@ serve(async (req) => {
 
           const responseMessages: any[] = [
             { role: 'system', content: responseWorkerPrompt },
-            ...history
+            ...buildStageHistory('worker')
           ]
 
           const workerRes = await fetch(getLLMRequestDetails(openRouterKey, model).url, {
@@ -2291,7 +2439,8 @@ serve(async (req) => {
 
       try {
         const brainPrompt = generateBlackboardBrainPrompt(businessProfile)
-        const brainInput = `## SITUATION ASSESSMENT\n${JSON.stringify(situationAssessment, null, 2)}\n\n## CONVERSATION HISTORY (Last ${history.length} messages)\n${history.map((m: any) => `${m.role}: ${m.content}`).join('\n').substring(0, 2000)}\n\n## CURRENT USER MESSAGE\n${prompt}`
+        const brainHistory = buildStageHistory('orchestrator')
+        const brainInput = `## SITUATION ASSESSMENT\n${JSON.stringify(situationAssessment, null, 2)}\n\n## CONVERSATION MEMORY (Full Arc)\n${conversationMemory || 'New conversation — no prior context.'}\n\n## RECENT CONVERSATION (Last ${brainHistory.length} messages)\n${brainHistory.filter((m: any) => m.role !== 'system').map((m: any) => `${m.role}: ${m.content}`).join('\n').substring(0, 4000)}\n\n## CURRENT USER MESSAGE\n${prompt}`
 
         const reqDetails = getLLMRequestDetails(openRouterKey, model)
         const brainRes = await fetch(reqDetails.url, {
@@ -2385,7 +2534,7 @@ serve(async (req) => {
                 max_tokens: maxTokens,
                 messages: [
                   { role: 'system', content: plannerSystemPrompt },
-                  ...history,
+                  ...buildStageHistory('planner'),
                   { role: 'user', content: enrichedPlannerInput }
                 ]
               })
@@ -2457,7 +2606,7 @@ serve(async (req) => {
           const researchSystemPrompt = generateResearchAgentPrompt(businessProfile) + `\n\nSTRATEGIC PLAN TO RESEARCH:\n${blackboard.pre_execution_plan || prompt}${blackboard.accumulated_context ? `\n\nBRAIN'S ACCUMULATED CONTEXT:\n${blackboard.accumulated_context}` : ''}`
           const researchMessages: any[] = [
             { role: 'system', content: researchSystemPrompt },
-            ...history
+            ...buildStageHistory('research')
           ]
 
           for (let i = 0; i < 4; i++) {
@@ -2721,7 +2870,7 @@ Make sure you actively integrate the Copywriter's and Creative Director's elevat
               max_tokens: maxTokens,
               messages: [
                 { role: 'system', content: plannerSystemPrompt },
-                ...history,
+                ...buildStageHistory('planner'),
                 { role: 'user', content: plannerUserMessage }
               ]
             })
@@ -2846,7 +2995,7 @@ Make sure you actively integrate the Copywriter's and Creative Director's elevat
         const researchSystemPrompt = generateResearchAgentPrompt(businessProfile) + `\n\nSTRATEGIC PLAN TO RESEARCH:\n${conversationBrain.pre_execution_plan}`
         const researchMessages: any[] = [
           { role: 'system', content: researchSystemPrompt },
-          ...history
+          ...buildStageHistory('research')
         ]
 
         for (let i = 0; i < 4; i++) {
@@ -3030,7 +3179,7 @@ Make sure you actively integrate the Copywriter's and Creative Director's elevat
 
         const responseMessages: any[] = [
           { role: 'system', content: responseWorkerPrompt },
-          ...history
+          ...buildStageHistory('worker')
         ]
 
         const workerRes = await fetch(getLLMRequestDetails(openRouterKey, model).url, {
@@ -3143,7 +3292,7 @@ Make sure you actively integrate the Copywriter's and Creative Director's elevat
 
       const finalMessages: any[] = [
         { role: 'system', content: generateSystemPrompt(businessProfile, historical_context) },
-        ...history
+        ...buildStageHistory('worker')
       ]
 
       // Track specific (tool + entity name) pairs to prevent duplicate action cards
