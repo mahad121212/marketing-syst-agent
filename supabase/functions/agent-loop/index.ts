@@ -723,6 +723,30 @@ Respond with ONLY valid JSON:
 IMPORTANT: routing_adjustment should almost always be null. You keep moving forward. Only set it to "ADD_REVIEWERS" if a stage revealed something so critical that the expert panel MUST weigh in (and they weren't originally selected), or "SKIP_REVIEWERS" if you now realize the expert panel would be redundant. Forward motion is the default.`;
 }
 
+function generateBlackboardWorkerPrompt(businessProfile: any) {
+  let profileContext = 'No business profile available.';
+  if (businessProfile) {
+    profileContext = `Business: ${businessProfile.business_name} | Industry: ${businessProfile.industry} | Market: ${businessProfile.country} (${businessProfile.currency || 'USD'}) | Target CPA: ${businessProfile.target_cpa || 'N/A'}`;
+  }
+
+  return `You are the Lead Executive Marketing Director and Senior Media Buyer.
+Your job is to synthesize the entire multi-agent deliberation into a single, cohesive, master-grade strategic response for the user.
+
+## YOUR CLIENT
+${profileContext}
+
+## CRITICAL ANTI-TEXTBOOK DIRECTIVES (NO LAZY HACKS):
+- NEVER suggest obscure, ineffective Meta dropdown hacks (e.g. 'friends of people with birthdays', 'newly engaged', obscure interest layering). In modern Meta performance, creative DOES the targeting.
+- Broad targeting combined with distinct psychological hooks and frictionless conversion paths beats artificial demographic filters every time.
+
+## YOUR SYNTHESIS MANDATE (ACTIVE INTEGRATION):
+DO NOT merely parrot or repeat the initial draft strategy proposal! You must actively UPGRADE and REWRITE it using the best contributions from the 6 Expert Reviewers:
+1. **UPGRADE COPY & ANGLES**: If the Copywriter Reviewer recommended stronger hooks (e.g. Taste-Maker positioning instead of generic gifting), REPLACE weaker draft hooks with the superior copy recommendations.
+2. **EMBED CREATIVE CONCEPTS**: Weave the Creative Director's visual concept (unboxing, packaging close-ups, trust bridges) directly into the creative direction.
+3. **EMBED FINANCE & OPERATIONAL SAFEGUARDS**: Embed the Finance VP's guardrails (RTO/return rate mitigation in cash-on-delivery markets, liquidity consolidation, contribution margin protection) into the execution steps.
+4. **HUMAN PARTNER OPENER**: Open with a warm, direct 1-sentence line connecting with the founder, resolving the core dilemma, and outlining the clear roadmap ahead.`;
+}
+
 // ============================================================
 // SYSTEM PROMPT GENERATORS FOR DEEP REASONING
 // ============================================================
@@ -794,11 +818,12 @@ If the founder's situation calls for caution, aggressive testing, or unconventio
 
 ## Holistic First-Principles Reasoning Rules:
 1. HOLISTIC EVALUATION: Synthesize target country CPM economics, margin/AOV, business model, and user resources. Never rely on rigid formulas.
-2. CURRENCY INTEGRITY: Preserve the user's native currency (${businessProfile?.currency || 'PKR'}) at all times. Use USD only for internal calculations.
-3. TIMELINE & PACING GUARDRAILS:
+2. NO LAZY TEXTBOOK HACKS: NEVER suggest obscure or ineffective Meta targeting dropdowns (e.g. 'friends of people with birthdays', 'close friends of newlyweds', micro-interest stacking). Modern Meta ad buying scales on creative-led targeting, psychological triggers, and broad delivery.
+3. CURRENCY INTEGRITY: Preserve the user's native currency (${businessProfile?.currency || 'PKR'}) at all times. Use USD only for internal calculations.
+4. TIMELINE & PACING GUARDRAILS:
    - **Direct User Constraint**: If the user explicitly asks to run a campaign for a specific duration, match your strategy to this timeline.
    - **Open-Ended Strategy**: Reason from first principles. Propose a robust budget pacing plan (recommend 4+ days minimum for Meta's machine learning).
-4. UNIFIED THINKING: Your internal blueprint will be consumed by downstream agents. Provide clear, objective strategic direction covering budget pacing, campaign structure, creative direction, and post-launch decision trees.`;
+5. UNIFIED THINKING: Your internal blueprint will be consumed by downstream agents. Provide clear, objective strategic direction covering budget pacing, campaign structure, creative direction, and post-launch decision trees.`;
 }
 
 function generatePreExecutionPlanGeneratorPrompt(businessProfile: any) {
@@ -2569,23 +2594,16 @@ serve(async (req) => {
 
         // ===== PHASE 5: WORKER (with Brain's FULL accumulated intelligence) =====
         if (selectedStages.has('WORKER')) {
-          const responseWorkerPrompt = generateSystemPrompt(businessProfile, historical_context) +
-            `\n\n## SHARED WORKING MEMORY (BLACKBOARD STATE):\n` +
+          const responseWorkerPrompt = generateBlackboardWorkerPrompt(businessProfile) +
+            `\n\n## COMPLETE BLACKBOARD SHARED MEMORY:\n` +
             `- User's Original Request: ${prompt}\n\n` +
-            (blackboard.strategy_proposal ? `- Core Strategy Proposal:\n${blackboard.strategy_proposal}\n\n` : '') +
-            (blackboard.expert_contributions.length > 0 ? `- Expert Contributions:\n${blackboard.expert_contributions.map((e: any) => `**${e.expert}:** ${e.review}`).join('\n\n')}\n\n` : '') +
-            `## BRAIN'S ACCUMULATED INTELLIGENCE\n` +
-            `The Living Brain has been monitoring every stage of this execution. Here is its final accumulated understanding:\n\n` +
-            `**Brain State:** ${blackboard.brain_state}\n\n` +
-            `**Key Discoveries (${blackboard.discoveries.length} total):**\n${blackboard.discoveries.map((d: string, i: number) => `${i + 1}. ${d}`).join('\n')}\n\n` +
-            `**Brain's Context for You:** ${blackboard.accumulated_context}\n\n` +
-            `## EXECUTION RULES:\n` +
-            `1. PROPORTIONAL RESPONSE: Match response depth to the user's actual need.\n` +
-            `2. NO REDUNDANT TOOL CALLS: Research data is already in the blackboard.\n` +
-            `3. HUMAN PARTNER OPENER: Open with a warm, direct 1-sentence line.\n` +
-            `4. ACTION CARD AWARENESS: Tell user to click Approve after tool calls.\n` +
-            `5. OBEY MASTER STRATEGY: If strategy advises against an action, explain why instead of executing.\n` +
-            `6. USE THE BRAIN'S DISCOVERIES: The Brain's accumulated intelligence contains critical facts discovered during this execution. Integrate them naturally into your response.`;
+            (blackboard.strategy_proposal ? `- Master Strategy Draft Proposal:\n${blackboard.strategy_proposal}\n\n` : '') +
+            (blackboard.expert_contributions.length > 0 ? `- Expert Reviews & Critiques from 6 Specialists:\n${blackboard.expert_contributions.map((e: any) => `**${e.expert}:** ${e.review}`).join('\n\n')}\n\n` : '') +
+            `## LIVING BRAIN ACCUMULATED STATE & DISCOVERIES:\n` +
+            `**Brain Understanding:** ${blackboard.brain_state}\n\n` +
+            `**Key Discoveries (${blackboard.discoveries.length} items):**\n${blackboard.discoveries.map((d: string, i: number) => `${i + 1}. ${d}`).join('\n')}\n\n` +
+            `## FINAL RESPONSE INSTRUCTION:\n` +
+            `Synthesize and rewrite the strategy into its final, upgraded, authoritative state. Integrate all expert reviewer upgrades directly into the copy and action steps. Do not leave reviewer advice as separate notes — embody it in the main strategy.`;
 
           const responseMessages: any[] = [
             { role: 'system', content: responseWorkerPrompt },
