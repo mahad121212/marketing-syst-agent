@@ -2597,17 +2597,21 @@ serve(async (req) => {
           const responseWorkerPrompt = generateBlackboardWorkerPrompt(businessProfile) +
             `\n\n## COMPLETE BLACKBOARD SHARED MEMORY:\n` +
             `- User's Original Request: ${prompt}\n\n` +
-            (blackboard.strategy_proposal ? `- Master Strategy Draft Proposal:\n${blackboard.strategy_proposal}\n\n` : '') +
-            (blackboard.expert_contributions.length > 0 ? `- Expert Reviews & Critiques from 6 Specialists:\n${blackboard.expert_contributions.map((e: any) => `**${e.expert}:** ${e.review}`).join('\n\n')}\n\n` : '') +
+            (blackboard.strategy_proposal ? `### Master Strategy Draft Proposal:\n${blackboard.strategy_proposal}\n\n` : '') +
+            (blackboard.expert_contributions.length > 0 ? `### Expert Reviews & Critiques from 6 Specialists:\n${blackboard.expert_contributions.map((e: any) => `**${e.expert}:** ${e.review}`).join('\n\n')}\n\n` : '') +
             `## LIVING BRAIN ACCUMULATED STATE & DISCOVERIES:\n` +
             `**Brain Understanding:** ${blackboard.brain_state}\n\n` +
             `**Key Discoveries (${blackboard.discoveries.length} items):**\n${blackboard.discoveries.map((d: string, i: number) => `${i + 1}. ${d}`).join('\n')}\n\n` +
             `## FINAL RESPONSE INSTRUCTION:\n` +
             `Synthesize and rewrite the strategy into its final, upgraded, authoritative state. Integrate all expert reviewer upgrades directly into the copy and action steps. Do not leave reviewer advice as separate notes — embody it in the main strategy.`;
 
+          const workerUserInput = `You have the complete Blackboard Shared Memory and the 6 Expert Reviewer critiques above. 
+Please synthesize and write the complete, upgraded, master-level final strategic response for the user: "${prompt}". 
+Make sure you actively integrate the Copywriter's and Creative Director's elevated angles and the Finance VP's safeguards into your final response.`;
+
           const responseMessages: any[] = [
             { role: 'system', content: responseWorkerPrompt },
-            ...history
+            { role: 'user', content: workerUserInput }
           ]
 
           const workerRes = await fetch(getLLMRequestDetails(openRouterKey, model).url, {
@@ -2616,30 +2620,20 @@ serve(async (req) => {
             body: JSON.stringify({
               model: getLLMRequestDetails(openRouterKey, model).model,
               max_tokens: maxTokens,
-              messages: responseMessages,
-              tools: ACTION_TOOLS,
-              tool_choice: 'auto'
+              messages: responseMessages
             })
           })
 
           if (workerRes.ok) {
             const aiData = await workerRes.json()
             const assistantMsg = aiData.choices[0].message
-            finalContent = assistantMsg.content || ''
-
-            if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0) {
-              for (const toolCall of assistantMsg.tool_calls) {
-                const toolName = toolCall.function.name
-                let toolArgs = {}
-                try { toolArgs = JSON.parse(toolCall.function.arguments || '{}') } catch {}
-                const toolResult = await executeTool(toolName, toolArgs, supabaseClient, user.id, session_id, !!is_background, settings?.meta_access_token || undefined, settings?.meta_ad_account_id || undefined)
-                logStageAudit(thinkingSteps, { phase: `PHASE_5_TOOL_${toolName.toUpperCase()}`, icon: '🛠️', title: `Phase 5 Tool: ${toolName}`, status: 'EXECUTED', tool_name: toolName, tool_args: toolArgs, tool_result: toolResult, raw_output: toolResult })
-                toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult, status: 'success' })
-              }
+            const workerOutput = assistantMsg.content || ''
+            if (workerOutput.trim().length > 50) {
+              finalContent = workerOutput
             }
           }
 
-          logStageAudit(thinkingSteps, { phase: 'PHASE_5_WORKER', icon: '⚡', title: 'Phase 5: Execution Worker', raw_output: finalContent || 'Worker produced response.' })
+          logStageAudit(thinkingSteps, { phase: 'PHASE_5_WORKER', icon: '⚡', title: 'Phase 5: Execution Worker Synthesis', raw_output: finalContent || 'Worker completed master synthesis.' })
 
           if (!finalContent || finalContent.trim().length === 0) {
             finalContent = blackboard.strategy_proposal || blackboard.pre_execution_plan || 'Strategy formulated.'
