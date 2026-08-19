@@ -1741,7 +1741,7 @@ serve(async (req) => {
           .from('conversation_summaries')
           .select('summary, message_count')
           .eq('session_id', session_id)
-          .single()
+          .maybeSingle()
 
         let conversationMemory = existingSummaryRow?.summary || ''
         let history: any[] = []
@@ -1751,27 +1751,27 @@ serve(async (req) => {
           const olderMessages = allMessages.slice(0, -RECENT_WINDOW)
           const recentMessages = allMessages.slice(-RECENT_WINDOW)
 
-          // Generate/update summary from older messages
-          const newSummary = await generateConversationSummary(
+          // Generate/update summary from older messages (FIRE-AND-FORGET to avoid timeout)
+          // Use existing summary immediately, update in background
+          generateConversationSummary(
             olderMessages,
             conversationMemory,
             openRouterKey,
             model
-          )
-
-          // Persist the updated summary
-          if (newSummary && newSummary.length > 20) {
-            conversationMemory = newSummary
-            await supabaseClient.from('conversation_summaries').upsert({
-              session_id,
-              user_id: user.id,
-              summary: newSummary,
-              message_count: allMessages.length,
-              last_summarized_at: new Date().toISOString()
-            }, { onConflict: 'session_id' }).then((res: any) => {
-              if (res.error) console.error('Failed to persist conversation summary:', res.error.message)
-            })
-          }
+          ).then(async (newSummary) => {
+            if (newSummary && newSummary.length > 20) {
+              conversationMemory = newSummary
+              await supabaseClient.from('conversation_summaries').upsert({
+                session_id,
+                user_id: user.id,
+                summary: newSummary,
+                message_count: allMessages.length,
+                last_summarized_at: new Date().toISOString()
+              }, { onConflict: 'session_id' })
+            }
+          }).catch((err: any) => {
+            console.error('Background summary generation failed:', err.message)
+          })
 
           // Build history: recent messages only (summary injected per-stage)
           history = recentMessages.map((msg: any) => ({
