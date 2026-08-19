@@ -2028,7 +2028,8 @@ serve(async (req) => {
           const researchSystemPrompt = generateResearchAgentPrompt(businessProfile) + `\n\nSTRATEGIC PLAN TO RESEARCH:\n${conversationBrain.pre_execution_plan || prompt}`
           const researchMessages: any[] = [
             { role: 'system', content: researchSystemPrompt },
-            ...buildStageHistory('research')
+            ...buildStageHistory('research'),
+            { role: 'user', content: prompt }
           ]
 
           for (let i = 0; i < 4; i++) {
@@ -2045,7 +2046,18 @@ serve(async (req) => {
               })
             })
 
-            if (!researchRes.ok) break
+            if (!researchRes.ok) {
+              const errText = await researchRes.text()
+              console.error('Emergent Research API error:', researchRes.status, errText)
+              logStageAudit(thinkingSteps, {
+                phase: 'PHASE_2_RESEARCH',
+                icon: '⚠️',
+                title: 'Phase 2: Research Agent (API Error)',
+                raw_output: `LLM API Error ${researchRes.status}: ${errText}`
+              })
+              break
+            }
+
             const aiData = await researchRes.json()
             const assistantMessage = aiData.choices[0].message
             researchMessages.push(assistantMessage)
@@ -2098,6 +2110,16 @@ serve(async (req) => {
               })
               break
             }
+          }
+
+          if (conversationBrain.evidence.length > 0 && !conversationBrain.research_synthesis) {
+            conversationBrain.research_synthesis = `Gathered live data from ${conversationBrain.evidence.length} tool call(s).`
+            logStageAudit(thinkingSteps, {
+              phase: 'PHASE_2_SYNTHESIS',
+              icon: '🔬',
+              title: 'Phase 2: Research Agent Synthesis',
+              raw_output: `Collected empirical account evidence across ${conversationBrain.evidence.length} tool execution(s). Data ready for worker.`
+            })
           }
         } else {
           logStageAudit(thinkingSteps, {
@@ -2218,8 +2240,10 @@ serve(async (req) => {
           const responseWorkerPrompt = generateSystemPrompt(businessProfile, historical_context) +
             `\n\n## SHARED WORKING MEMORY (BLACKBOARD STATE):\n` +
             `- User's Original Request: ${prompt}\n\n` +
-            (conversationBrain.strategy_proposal ? `- Core Strategy Proposal:\n${conversationBrain.strategy_proposal}\n\n` : '') +
-            (conversationBrain.expert_contributions.length > 0 ? `- Expert Contributions & Reviews:\n${conversationBrain.expert_contributions.map((e: any) => `**${e.expert}:** ${e.review}`).join('\n\n')}\n\n` : '') +
+            (conversationBrain.research_synthesis ? `### Research Agent Synthesis:\n${conversationBrain.research_synthesis}\n\n` : '') +
+            (conversationBrain.evidence && conversationBrain.evidence.length > 0 ? `### Research Evidence Data (Ground Truth):\n${JSON.stringify(conversationBrain.evidence, null, 2)}\n\n` : '') +
+            (conversationBrain.strategy_proposal ? `### Core Strategy Proposal:\n${conversationBrain.strategy_proposal}\n\n` : '') +
+            (conversationBrain.expert_contributions.length > 0 ? `### Expert Contributions & Reviews:\n${conversationBrain.expert_contributions.map((e: any) => `**${e.expert}:** ${e.review}`).join('\n\n')}\n\n` : '') +
             `## CRITICAL EXECUTION RULES:\n` +
             `1. PROPORTIONAL RESPONSE: If the user's original request is a data/observation question, LEAD with a clean, plain data presentation of what exists in the account.\n` +
             `2. NO REDUNDANT TOOL CALLS: The Research Agent has already gathered all live account data. Only use creation/action tools if needed.\n` +
@@ -2233,7 +2257,8 @@ serve(async (req) => {
 
           const responseMessages: any[] = [
             { role: 'system', content: responseWorkerPrompt },
-            ...buildStageHistory('worker')
+            ...buildStageHistory('worker'),
+            { role: 'user', content: prompt }
           ]
 
           const workerRes = await fetch(getLLMRequestDetails(openRouterKey, model).url, {
@@ -2606,7 +2631,8 @@ serve(async (req) => {
           const researchSystemPrompt = generateResearchAgentPrompt(businessProfile) + `\n\nSTRATEGIC PLAN TO RESEARCH:\n${blackboard.pre_execution_plan || prompt}${blackboard.accumulated_context ? `\n\nBRAIN'S ACCUMULATED CONTEXT:\n${blackboard.accumulated_context}` : ''}`
           const researchMessages: any[] = [
             { role: 'system', content: researchSystemPrompt },
-            ...buildStageHistory('research')
+            ...buildStageHistory('research'),
+            { role: 'user', content: prompt }
           ]
 
           for (let i = 0; i < 4; i++) {
@@ -2995,7 +3021,8 @@ Make sure you actively integrate the Copywriter's and Creative Director's elevat
         const researchSystemPrompt = generateResearchAgentPrompt(businessProfile) + `\n\nSTRATEGIC PLAN TO RESEARCH:\n${conversationBrain.pre_execution_plan}`
         const researchMessages: any[] = [
           { role: 'system', content: researchSystemPrompt },
-          ...buildStageHistory('research')
+          ...buildStageHistory('research'),
+          { role: 'user', content: prompt }
         ]
 
         for (let i = 0; i < 4; i++) {
@@ -3164,6 +3191,8 @@ Make sure you actively integrate the Copywriter's and Creative Director's elevat
         const responseWorkerPrompt = generateSystemPrompt(businessProfile, historical_context) +
           `\n\n## SHARED WORKING MEMORY (BLACKBOARD STATE):\n` +
           `- User's Original Request: ${prompt}\n\n` +
+          (conversationBrain.research_synthesis ? `### Research Agent Synthesis:\n${conversationBrain.research_synthesis}\n\n` : '') +
+          (conversationBrain.evidence && conversationBrain.evidence.length > 0 ? `### Research Evidence Data (Ground Truth):\n${JSON.stringify(conversationBrain.evidence, null, 2)}\n\n` : '') +
           `- Core Strategy Proposal:\n${conversationBrain.strategy_proposal}\n\n` +
           `- Expert Contributions & Reviews:\n${conversationBrain.expert_contributions.map((e: any) => `**${e.expert}:** ${e.review}`).join('\n\n')}\n\n` +
           `## CRITICAL EXECUTION RULES:\n` +
@@ -3179,7 +3208,8 @@ Make sure you actively integrate the Copywriter's and Creative Director's elevat
 
         const responseMessages: any[] = [
           { role: 'system', content: responseWorkerPrompt },
-          ...buildStageHistory('worker')
+          ...buildStageHistory('worker'),
+          { role: 'user', content: prompt }
         ]
 
         const workerRes = await fetch(getLLMRequestDetails(openRouterKey, model).url, {
@@ -3292,7 +3322,8 @@ Make sure you actively integrate the Copywriter's and Creative Director's elevat
 
       const finalMessages: any[] = [
         { role: 'system', content: generateSystemPrompt(businessProfile, historical_context) },
-        ...buildStageHistory('worker')
+        ...buildStageHistory('worker'),
+        { role: 'user', content: prompt }
       ]
 
       // Track specific (tool + entity name) pairs to prevent duplicate action cards
