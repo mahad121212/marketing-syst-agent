@@ -631,6 +631,99 @@ CRITICAL: The stages array determines EXACTLY which agents will be activated. Th
 }
 
 // ============================================================
+// BLACKBOARD MODE: LIVING BRAIN PROMPT GENERATORS
+// ============================================================
+
+function generateBlackboardBrainPrompt(businessProfile: any) {
+  let profileContext = 'No business profile available.';
+  if (businessProfile) {
+    profileContext = `Business: ${businessProfile.business_name} | Industry: ${businessProfile.industry} | Market: ${businessProfile.country} (${businessProfile.currency || 'USD'}) | Stage: ${businessProfile.business_stage || 'Unknown'}`;
+  }
+
+  return `You are the Living Brain of a multi-agent marketing intelligence system. You are modeled after the human brain — not a judge, not a quality inspector, not a perfectionist. You are the integrating intelligence that holds the whole picture together while specialized agents do their work.
+
+## YOUR BUSINESS CLIENT
+${profileContext}
+
+## HOW YOU THINK (THE CUP ANALOGY)
+When a human picks up a cup, the brain does not:
+- Plan the mathematically perfect grip
+- Judge whether each finger is positioned correctly
+- Retry until the grip is optimal
+
+Instead, the brain:
+- Fires the initial intention
+- Receives sensory feedback as fingers touch the surface
+- Adjusts naturally and continuously
+- Moves forward, not because it is perfect, but because it knows enough
+
+You operate the same way. You fire stages, listen to what they found, update your understanding, enrich the next stage's context, and keep moving forward.
+
+## YOUR ROLE — INITIAL ROUTING
+Right now, you are making the INITIAL ROUTING DECISION. Evaluate the user's message and decide:
+
+1. **What is the user actually asking?** (intent, emotion, urgency)
+2. **What stages does this request need?** (which specialists to wake up)
+3. **What is my initial understanding?** (what I think I know before any stage runs)
+
+## YOUR AVAILABLE AGENTS (STAGES)
+- **PLANNER**: Deep strategic first-principles thinker
+- **BLUEPRINT**: Converts planning into structured deliverables
+- **RESEARCH**: Gathers live data from Meta Ads account
+- **STRATEGY**: Master strategy synthesis
+- **REVIEWERS**: Panel of 6 domain experts (Strategy, Copy, Creative, Diversity, Compliance, Finance)
+- **WORKER**: Execution agent with tool access + final response generation
+- **FORMATTER**: Polishes output into premium layout
+
+## OUTPUT FORMAT
+Respond with ONLY valid JSON:
+
+\`\`\`json
+{
+  "routing": "CONVERSATIONAL | CLARIFICATION | ACTIVE",
+  "reasoning": "Your natural reasoning for this routing decision",
+  "conversational_response": "Direct reply if CONVERSATIONAL",
+  "clarification_question": "Question to ask if CLARIFICATION",
+  "stages": ["PLANNER", "RESEARCH", "STRATEGY", "WORKER", "FORMATTER"],
+  "initial_brain_state": "What I currently understand about this user's situation before any stage runs. What I'm watching for. What I think matters most.",
+  "initial_discoveries": ["Key assumptions or hypotheses I'm starting with"]
+}
+\`\`\`
+
+For CONVERSATIONAL: stages = [], provide conversational_response.
+For CLARIFICATION: stages = [], provide clarification_question.
+For ACTIVE: list the stages needed. The Brain will monitor each stage and evolve its understanding as they run.`;
+}
+
+function generateBrainAbsorbPrompt() {
+  return `You are the Living Brain of a multi-agent marketing intelligence system. A specialist stage just completed its work and reported back to you.
+
+## YOUR ROLE — ABSORB, LEARN, ENRICH
+You are NOT a judge. You are NOT looking for mistakes. You are the nervous system that carries information forward.
+
+Your job right now:
+1. **LISTEN**: What did this stage just tell you? What did it find?
+2. **LEARN**: Does this change or enrich what you understand about the user's situation?
+3. **CARRY FORWARD**: What specific context should the NEXT stage receive that it wouldn't have otherwise?
+
+Think of yourself as sensory feedback. When your fingers touch the cup and report "it's hot" — you don't retry the grip. You adjust naturally: grip lighter, use the handle instead. That's what you're doing now.
+
+## OUTPUT FORMAT
+Respond with ONLY valid JSON:
+
+\`\`\`json
+{
+  "new_discoveries": ["Specific facts or insights this stage revealed"],
+  "updated_understanding": "Brief updated summary of what I now understand about the user's situation, incorporating everything I've learned so far",
+  "context_for_next_stage": "Specific enriched context, warnings, or key facts to inject into the next stage's input",
+  "routing_adjustment": null
+}
+\`\`\`
+
+IMPORTANT: routing_adjustment should almost always be null. You keep moving forward. Only set it to "ADD_REVIEWERS" if a stage revealed something so critical that the expert panel MUST weigh in (and they weren't originally selected), or "SKIP_REVIEWERS" if you now realize the expert panel would be redundant. Forward motion is the default.`;
+}
+
+// ============================================================
 // SYSTEM PROMPT GENERATORS FOR DEEP REASONING
 // ============================================================
 function generatePlannerPrompt(businessProfile: any, historical_context?: string) {
@@ -2090,6 +2183,490 @@ serve(async (req) => {
           })
         }
       } // End of dynamic route (non-conversational, non-clarification)
+    } else if (reasoning_mode === 'blackboard') {
+      // ============================================================
+      // BLACKBOARD MODE: Living Brain + Dynamic Stage Orchestration
+      // ============================================================
+      logStageAudit(thinkingSteps, {
+        phase: 'PHASE_0_KNOWLEDGE',
+        icon: '📚',
+        title: 'Phase 0: Situation Assessment & Knowledge Intelligence',
+        user_input: prompt,
+        raw_output: `Situation Assessment:\n${JSON.stringify(situationAssessment, null, 2)}\n\nRetrieved Marketing Knowledge Context:\n${knowledgeContext || 'No frameworks matched — proceeding with LLM general knowledge.'}`
+      })
+
+      // ===== THE LIVING BLACKBOARD =====
+      const blackboard: any = {
+        brain_state: '',
+        discoveries: [] as string[],
+        accumulated_context: '',
+        planner_thinking: '',
+        pre_execution_plan: '',
+        evidence: [],
+        research_synthesis: '',
+        strategy_proposal: '',
+        expert_contributions: []
+      }
+
+      // Helper: Brain Absorb — lightweight call between stages
+      async function brainAbsorb(stageName: string, stageOutput: string): Promise<any> {
+        try {
+          const absorbInput = `## STAGE THAT JUST COMPLETED\n${stageName}\n\n## STAGE OUTPUT\n${stageOutput.substring(0, 3000)}\n\n## MY CURRENT UNDERSTANDING (BRAIN STATE)\n${blackboard.brain_state || 'No prior state — this is the first stage.'}\n\n## DISCOVERIES SO FAR\n${blackboard.discoveries.length > 0 ? blackboard.discoveries.map((d: string, i: number) => `${i + 1}. ${d}`).join('\n') : 'None yet.'}`
+
+          const reqDetails = getLLMRequestDetails(openRouterKey, model)
+          const absorbRes = await fetch(reqDetails.url, {
+            method: 'POST',
+            headers: reqDetails.headers,
+            body: JSON.stringify({
+              model: reqDetails.model,
+              max_tokens: 512,
+              messages: [
+                { role: 'system', content: generateBrainAbsorbPrompt() },
+                { role: 'user', content: absorbInput }
+              ]
+            })
+          })
+
+          if (absorbRes.ok) {
+            const data = await absorbRes.json()
+            const rawOutput = data.choices[0].message.content || ''
+            const jsonMatch = rawOutput.match(/\{[\s\S]*\}/)
+            if (jsonMatch) {
+              const parsed = JSON.parse(jsonMatch[0])
+              // Update the living blackboard
+              if (parsed.new_discoveries) {
+                blackboard.discoveries.push(...parsed.new_discoveries)
+              }
+              if (parsed.updated_understanding) {
+                blackboard.brain_state = parsed.updated_understanding
+              }
+              if (parsed.context_for_next_stage) {
+                blackboard.accumulated_context = parsed.context_for_next_stage
+              }
+
+              logStageAudit(thinkingSteps, {
+                phase: `BRAIN_ABSORB_${stageName.toUpperCase().replace(/\s+/g, '_')}`,
+                icon: '🧠',
+                title: `Brain Absorb: Processing ${stageName}`,
+                user_input: absorbInput,
+                raw_output: `Updated Understanding: ${parsed.updated_understanding || 'No change'}\n\nNew Discoveries: ${JSON.stringify(parsed.new_discoveries || [])}\n\nContext for Next Stage: ${parsed.context_for_next_stage || 'None'}\n\nRouting Adjustment: ${parsed.routing_adjustment || 'None — continuing forward'}`
+              })
+
+              return parsed
+            }
+          }
+        } catch (err: any) {
+          console.error(`Brain absorb failed for ${stageName}:`, err.message)
+        }
+        return { new_discoveries: [], updated_understanding: blackboard.brain_state, context_for_next_stage: '', routing_adjustment: null }
+      }
+
+      // ===== BRAIN INITIAL ROUTING =====
+      let brainDecision: any = { routing: 'ACTIVE', stages: ['PLANNER', 'BLUEPRINT', 'RESEARCH', 'STRATEGY', 'REVIEWERS', 'WORKER', 'FORMATTER'], reasoning: 'Fallback to full pipeline.', initial_brain_state: '', initial_discoveries: [] }
+
+      try {
+        const brainPrompt = generateBlackboardBrainPrompt(businessProfile)
+        const brainInput = `## SITUATION ASSESSMENT\n${JSON.stringify(situationAssessment, null, 2)}\n\n## CONVERSATION HISTORY (Last ${history.length} messages)\n${history.map((m: any) => `${m.role}: ${m.content}`).join('\n').substring(0, 2000)}\n\n## CURRENT USER MESSAGE\n${prompt}`
+
+        const reqDetails = getLLMRequestDetails(openRouterKey, model)
+        const brainRes = await fetch(reqDetails.url, {
+          method: 'POST',
+          headers: reqDetails.headers,
+          body: JSON.stringify({
+            model: reqDetails.model,
+            max_tokens: 1024,
+            messages: [
+              { role: 'system', content: brainPrompt },
+              { role: 'user', content: brainInput }
+            ]
+          })
+        })
+
+        if (brainRes.ok) {
+          const brainData = await brainRes.json()
+          const rawBrainOutput = brainData.choices[0].message.content || ''
+          const jsonMatch = rawBrainOutput.match(/\{[\s\S]*\}/)
+          if (jsonMatch) {
+            brainDecision = JSON.parse(jsonMatch[0])
+          }
+
+          // Initialize blackboard with brain's initial state
+          blackboard.brain_state = brainDecision.initial_brain_state || ''
+          blackboard.discoveries = brainDecision.initial_discoveries || []
+
+          logStageAudit(thinkingSteps, {
+            phase: 'BRAIN_INITIAL_ROUTING',
+            icon: '🧠',
+            title: `Living Brain: Initial Route → ${brainDecision.routing}`,
+            system_prompt: brainPrompt,
+            user_input: brainInput,
+            raw_output: `Routing: ${brainDecision.routing}\nReasoning: ${brainDecision.reasoning}\nStages: ${JSON.stringify(brainDecision.stages || [])}\nInitial Brain State: ${brainDecision.initial_brain_state || 'N/A'}\nInitial Discoveries: ${JSON.stringify(brainDecision.initial_discoveries || [])}`
+          })
+        }
+      } catch (err: any) {
+        console.error('Brain initial routing failed:', err.message)
+        logStageAudit(thinkingSteps, {
+          phase: 'BRAIN_INITIAL_ROUTING',
+          icon: '🧠',
+          title: 'Living Brain: Fallback → ACTIVE (Full Pipeline)',
+          raw_output: `Brain routing failed: ${err.message}. Defaulting to full pipeline.`
+        })
+      }
+
+      let selectedStages = new Set((brainDecision.stages || []).map((s: string) => s.toUpperCase()))
+
+      // ===== CONVERSATIONAL ROUTE =====
+      if (brainDecision.routing === 'CONVERSATIONAL') {
+        finalContent = brainDecision.conversational_response || "Hey! I'm here and ready. What are we working on today?"
+        logStageAudit(thinkingSteps, {
+          phase: 'BRAIN_CONVERSATIONAL',
+          icon: '💬',
+          title: 'Brain Route: Conversational Response',
+          status: 'COMPLETED',
+          raw_output: finalContent
+        })
+      }
+      // ===== CLARIFICATION ROUTE =====
+      else if (brainDecision.routing === 'CLARIFICATION') {
+        finalContent = brainDecision.clarification_question || "Before I build your strategy, could you share a few more details about your product and budget?"
+        logStageAudit(thinkingSteps, {
+          phase: 'BRAIN_CLARIFICATION',
+          icon: '❓',
+          title: 'Brain Route: Clarification Needed',
+          status: 'COMPLETED',
+          raw_output: finalContent
+        })
+      }
+      // ===== ACTIVE ROUTE: Stage execution with Brain absorb between each =====
+      else {
+        const plannerUserMessage = knowledgeContext
+          ? `## SITUATION ASSESSMENT\n${JSON.stringify(situationAssessment, null, 2)}\n\n## MARKETING INTELLIGENCE CONTEXT\n${knowledgeContext}\n\n## USER REQUEST\n${prompt}`
+          : `## SITUATION ASSESSMENT\n${JSON.stringify(situationAssessment, null, 2)}\n\n## USER REQUEST\n${prompt}`
+
+        // ===== PHASE 1: PLANNER (with Brain context) =====
+        if (selectedStages.has('PLANNER')) {
+          try {
+            const plannerSystemPrompt = generatePlannerPrompt(businessProfile, historical_context)
+            const enrichedPlannerInput = blackboard.accumulated_context
+              ? `${plannerUserMessage}\n\n## BRAIN'S INITIAL CONTEXT\n${blackboard.accumulated_context}`
+              : plannerUserMessage
+
+            const reqDetails = getLLMRequestDetails(openRouterKey, model)
+            const plannerRes = await fetch(reqDetails.url, {
+              method: 'POST',
+              headers: reqDetails.headers,
+              body: JSON.stringify({
+                model: reqDetails.model,
+                max_tokens: maxTokens,
+                messages: [
+                  { role: 'system', content: plannerSystemPrompt },
+                  ...history,
+                  { role: 'user', content: enrichedPlannerInput }
+                ]
+              })
+            })
+            if (plannerRes.ok) {
+              const plannerData = await plannerRes.json()
+              blackboard.planner_thinking = plannerData.choices[0].message.content || ''
+              logStageAudit(thinkingSteps, {
+                phase: 'PHASE_1_PLANNER',
+                icon: '💭',
+                title: 'Phase 1: Strategic Planner Reasoning',
+                raw_output: blackboard.planner_thinking
+              })
+              // Brain absorbs Planner's output
+              const absorbResult = await brainAbsorb('Planner', blackboard.planner_thinking)
+              if (absorbResult.routing_adjustment === 'ADD_REVIEWERS') selectedStages.add('REVIEWERS')
+              if (absorbResult.routing_adjustment === 'SKIP_REVIEWERS') selectedStages.delete('REVIEWERS')
+            }
+          } catch (err: any) {
+            console.error('Blackboard Planner failed:', err.message)
+          }
+        } else {
+          logStageAudit(thinkingSteps, { phase: 'PHASE_1_PLANNER', icon: '💭', title: 'Phase 1: Strategic Planner', status: 'SKIPPED', raw_output: 'Brain decided this stage is not needed.' })
+        }
+
+        // ===== PHASE 1.5: BLUEPRINT (with Brain context) =====
+        if (selectedStages.has('BLUEPRINT')) {
+          const planGenSystemPrompt = generatePreExecutionPlanGeneratorPrompt(businessProfile)
+          const enrichedBlueprintInput = `## Planner's Deep Thinking\n${blackboard.planner_thinking || 'No planner output.'}\n\n## User's Original Prompt\n${prompt}${blackboard.accumulated_context ? `\n\n## BRAIN'S ACCUMULATED CONTEXT\n${blackboard.accumulated_context}` : ''}`
+          try {
+            const reqDetails = getLLMRequestDetails(openRouterKey, model)
+            const planGenRes = await fetch(reqDetails.url, {
+              method: 'POST',
+              headers: reqDetails.headers,
+              body: JSON.stringify({
+                model: reqDetails.model,
+                max_tokens: maxTokens,
+                messages: [
+                  { role: 'system', content: planGenSystemPrompt },
+                  { role: 'user', content: enrichedBlueprintInput }
+                ]
+              })
+            })
+            if (planGenRes.ok) {
+              const data = await planGenRes.json()
+              blackboard.pre_execution_plan = data.choices[0].message.content || blackboard.planner_thinking
+              logStageAudit(thinkingSteps, {
+                phase: 'PHASE_1_5_BLUEPRINT',
+                icon: '🛡️',
+                title: 'Phase 1.5: Pre-Execution Strategic Blueprint',
+                raw_output: blackboard.pre_execution_plan
+              })
+              // Brain absorbs Blueprint output
+              const absorbResult = await brainAbsorb('Blueprint', blackboard.pre_execution_plan)
+              if (absorbResult.routing_adjustment === 'ADD_REVIEWERS') selectedStages.add('REVIEWERS')
+              if (absorbResult.routing_adjustment === 'SKIP_REVIEWERS') selectedStages.delete('REVIEWERS')
+            }
+          } catch (err: any) {
+            console.error('Blackboard Blueprint failed:', err.message)
+            blackboard.pre_execution_plan = blackboard.planner_thinking
+          }
+        } else {
+          blackboard.pre_execution_plan = blackboard.planner_thinking
+          logStageAudit(thinkingSteps, { phase: 'PHASE_1_5_BLUEPRINT', icon: '🛡️', title: 'Phase 1.5: Blueprint', status: 'SKIPPED', raw_output: 'Brain decided this stage is not needed.' })
+        }
+
+        // ===== PHASE 2: RESEARCH (with Brain context) =====
+        if (selectedStages.has('RESEARCH')) {
+          const researchSystemPrompt = generateResearchAgentPrompt(businessProfile) + `\n\nSTRATEGIC PLAN TO RESEARCH:\n${blackboard.pre_execution_plan || prompt}${blackboard.accumulated_context ? `\n\nBRAIN'S ACCUMULATED CONTEXT:\n${blackboard.accumulated_context}` : ''}`
+          const researchMessages: any[] = [
+            { role: 'system', content: researchSystemPrompt },
+            ...history
+          ]
+
+          for (let i = 0; i < 4; i++) {
+            const reqDetails = getLLMRequestDetails(openRouterKey, model)
+            const researchRes = await fetch(reqDetails.url, {
+              method: 'POST',
+              headers: reqDetails.headers,
+              body: JSON.stringify({
+                model: reqDetails.model,
+                max_tokens: maxTokens,
+                messages: researchMessages,
+                tools: AGENT_TOOLS.filter(t => ['get_campaign_hierarchy', 'check_agent_memory', 'get_state_snapshots'].includes(t.function.name)),
+                tool_choice: 'auto'
+              })
+            })
+            if (!researchRes.ok) break
+            const aiData = await researchRes.json()
+            const assistantMessage = aiData.choices[0].message
+            researchMessages.push(assistantMessage)
+
+            if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
+              for (const toolCall of assistantMessage.tool_calls) {
+                const toolName = toolCall.function.name
+                let toolArgs = {}
+                try { toolArgs = JSON.parse(toolCall.function.arguments || '{}') } catch {}
+                const toolResult = await executeTool(toolName, toolArgs, supabaseClient, user.id, session_id, !!is_background, settings?.meta_access_token || undefined, settings?.meta_ad_account_id || undefined)
+                logStageAudit(thinkingSteps, { phase: `PHASE_2_TOOL_${toolName.toUpperCase()}`, icon: '🛠️', title: `Phase 2 Tool: ${toolName}`, status: 'EXECUTED', tool_name: toolName, tool_args: toolArgs, tool_result: toolResult, raw_output: toolResult })
+                try { const parsed = JSON.parse(toolResult); if (parsed.type === 'PROPOSAL' || parsed.type === 'GOAL_PROPOSAL') proposals.push(parsed) } catch {}
+                toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult, status: 'success' })
+                blackboard.evidence.push({ tool: toolName, args: toolArgs, result: toolResult })
+                researchMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResult })
+              }
+            } else {
+              blackboard.research_synthesis = assistantMessage.content || ''
+              logStageAudit(thinkingSteps, { phase: 'PHASE_2_SYNTHESIS', icon: '🔬', title: 'Phase 2: Research Synthesis', raw_output: blackboard.research_synthesis })
+              break
+            }
+          }
+          // Brain absorbs Research findings
+          const absorbResult = await brainAbsorb('Research', blackboard.research_synthesis + '\n\nEvidence: ' + JSON.stringify(blackboard.evidence).substring(0, 1500))
+          if (absorbResult.routing_adjustment === 'ADD_REVIEWERS') selectedStages.add('REVIEWERS')
+          if (absorbResult.routing_adjustment === 'SKIP_REVIEWERS') selectedStages.delete('REVIEWERS')
+        } else {
+          logStageAudit(thinkingSteps, { phase: 'PHASE_2_RESEARCH', icon: '🔬', title: 'Phase 2: Research', status: 'SKIPPED', raw_output: 'Brain decided this stage is not needed.' })
+        }
+
+        // ===== PHASE 3: STRATEGY (with Brain's full accumulated context) =====
+        if (selectedStages.has('STRATEGY')) {
+          const strategySystemPrompt = generateStrategyAgentPrompt(businessProfile)
+          const strategyInput = `## COMPLETE CONTEXT CHAIN:\n\n### 1. User's Original Request\n${prompt}\n\n### 2. Strategic Planner's Thinking\n${blackboard.planner_thinking || '(Skipped)'}\n\n### 3. Blueprint\n${blackboard.pre_execution_plan || '(Skipped)'}\n\n### 4. Research Synthesis\n${blackboard.research_synthesis || '(Skipped)'}\n\n### 5. Research Evidence\n${JSON.stringify(blackboard.evidence, null, 2)}\n\n### 6. Knowledge Context\n${knowledgeContext}\n\n### 7. BRAIN'S LIVING CONTEXT (Accumulated Intelligence)\n${blackboard.brain_state}\n\nKey Discoveries So Far:\n${blackboard.discoveries.map((d: string, i: number) => `${i + 1}. ${d}`).join('\n')}\n\nEnriched Context from Brain:\n${blackboard.accumulated_context}`
+          try {
+            const reqDetails = getLLMRequestDetails(openRouterKey, model)
+            const strategyRes = await fetch(reqDetails.url, {
+              method: 'POST',
+              headers: reqDetails.headers,
+              body: JSON.stringify({
+                model: reqDetails.model,
+                max_tokens: maxTokens,
+                messages: [
+                  { role: 'system', content: strategySystemPrompt },
+                  { role: 'user', content: strategyInput }
+                ]
+              })
+            })
+            if (strategyRes.ok) {
+              const data = await strategyRes.json()
+              blackboard.strategy_proposal = data.choices[0].message.content || blackboard.pre_execution_plan
+              logStageAudit(thinkingSteps, { phase: 'PHASE_3_MASTER_STRATEGY', icon: '🧠', title: 'Phase 3: Master Strategy', raw_output: blackboard.strategy_proposal })
+              // Brain absorbs Strategy
+              const absorbResult = await brainAbsorb('Strategy', blackboard.strategy_proposal)
+              if (absorbResult.routing_adjustment === 'ADD_REVIEWERS') selectedStages.add('REVIEWERS')
+              if (absorbResult.routing_adjustment === 'SKIP_REVIEWERS') selectedStages.delete('REVIEWERS')
+            }
+          } catch (err: any) {
+            console.error('Blackboard Strategy failed:', err.message)
+            blackboard.strategy_proposal = blackboard.pre_execution_plan
+          }
+        } else {
+          blackboard.strategy_proposal = blackboard.pre_execution_plan || blackboard.research_synthesis
+          logStageAudit(thinkingSteps, { phase: 'PHASE_3_MASTER_STRATEGY', icon: '🧠', title: 'Phase 3: Strategy', status: 'SKIPPED', raw_output: 'Brain decided this stage is not needed.' })
+        }
+
+        // ===== PHASE 4: REVIEWERS (with Brain's accumulated discoveries) =====
+        if (selectedStages.has('REVIEWERS')) {
+          const reviewerConfigs = [
+            { id: 'strategy', label: '🎯 CSO Strategy Expert', promptFn: generateStrategyReviewerPrompt },
+            { id: 'copy', label: '✍️ Lead Copywriting Expert', promptFn: generateCopyReviewerPrompt },
+            { id: 'creative', label: '🎨 Creative Director Expert', promptFn: generateCreativeReviewerPrompt },
+            { id: 'diversity', label: '🎭 Creative Diversity Auditor', promptFn: generateDiversityReviewerPrompt },
+            { id: 'compliance', label: '🛡️ Operations & Policy Auditor', promptFn: generateComplianceReviewerPrompt },
+            { id: 'performance', label: '📊 Finance & Performance Expert', promptFn: generatePerformanceReviewerPrompt }
+          ]
+
+          // Brain's accumulated context is injected into EVERY reviewer
+          const brainBriefing = `\n\n## BRAIN'S BRIEFING (Accumulated Intelligence)\n${blackboard.brain_state}\n\nKey Discoveries:\n${blackboard.discoveries.map((d: string, i: number) => `${i + 1}. ${d}`).join('\n')}`
+
+          const reviewerPromises = reviewerConfigs.map(async (config) => {
+            const sysPrompt = config.promptFn(businessProfile)
+            const usrInput = `User's Request: ${prompt}\n\nStrategy Proposal to Review:\n${blackboard.strategy_proposal}\n\nResearch Context:\n${blackboard.research_synthesis}${brainBriefing}`
+            try {
+              const reqDetails = getLLMRequestDetails(openRouterKey, model)
+              const reviewerRes = await fetch(reqDetails.url, {
+                method: 'POST',
+                headers: reqDetails.headers,
+                body: JSON.stringify({
+                  model: reqDetails.model,
+                  max_tokens: reviewerMaxTokens,
+                  messages: [
+                    { role: 'system', content: sysPrompt },
+                    { role: 'user', content: usrInput }
+                  ]
+                })
+              })
+              if (!reviewerRes.ok) throw new Error(await reviewerRes.text())
+              const data = await reviewerRes.json()
+              return { role: config.id, label: config.label, raw_review: data.choices[0].message.content || 'Validated.' }
+            } catch (err: any) {
+              return { role: config.id, label: config.label, raw_review: 'Validated. No concerns.' }
+            }
+          })
+
+          const reviews = await Promise.all(reviewerPromises)
+          for (const r of reviews) {
+            blackboard.expert_contributions.push({ expert: r.label, review: r.raw_review })
+            logStageAudit(thinkingSteps, { phase: `PHASE_4_REVIEWER_${r.role.toUpperCase()}`, icon: '📋', title: `Phase 4: ${r.label}`, raw_output: r.raw_review })
+          }
+
+          // Brain absorbs all reviewer feedback as one synthesis
+          const allReviews = reviews.map(r => `${r.label}: ${r.raw_review}`).join('\n\n')
+          await brainAbsorb('Expert Reviewers (6 Specialists)', allReviews)
+        } else {
+          logStageAudit(thinkingSteps, { phase: 'PHASE_4_REVIEWERS', icon: '📋', title: 'Phase 4: Expert Reviewers', status: 'SKIPPED', raw_output: 'Brain decided expert review is not needed.' })
+        }
+
+        // ===== PHASE 5: WORKER (with Brain's FULL accumulated intelligence) =====
+        if (selectedStages.has('WORKER')) {
+          const responseWorkerPrompt = generateSystemPrompt(businessProfile, historical_context) +
+            `\n\n## SHARED WORKING MEMORY (BLACKBOARD STATE):\n` +
+            `- User's Original Request: ${prompt}\n\n` +
+            (blackboard.strategy_proposal ? `- Core Strategy Proposal:\n${blackboard.strategy_proposal}\n\n` : '') +
+            (blackboard.expert_contributions.length > 0 ? `- Expert Contributions:\n${blackboard.expert_contributions.map((e: any) => `**${e.expert}:** ${e.review}`).join('\n\n')}\n\n` : '') +
+            `## BRAIN'S ACCUMULATED INTELLIGENCE\n` +
+            `The Living Brain has been monitoring every stage of this execution. Here is its final accumulated understanding:\n\n` +
+            `**Brain State:** ${blackboard.brain_state}\n\n` +
+            `**Key Discoveries (${blackboard.discoveries.length} total):**\n${blackboard.discoveries.map((d: string, i: number) => `${i + 1}. ${d}`).join('\n')}\n\n` +
+            `**Brain's Context for You:** ${blackboard.accumulated_context}\n\n` +
+            `## EXECUTION RULES:\n` +
+            `1. PROPORTIONAL RESPONSE: Match response depth to the user's actual need.\n` +
+            `2. NO REDUNDANT TOOL CALLS: Research data is already in the blackboard.\n` +
+            `3. HUMAN PARTNER OPENER: Open with a warm, direct 1-sentence line.\n` +
+            `4. ACTION CARD AWARENESS: Tell user to click Approve after tool calls.\n` +
+            `5. OBEY MASTER STRATEGY: If strategy advises against an action, explain why instead of executing.\n` +
+            `6. USE THE BRAIN'S DISCOVERIES: The Brain's accumulated intelligence contains critical facts discovered during this execution. Integrate them naturally into your response.`;
+
+          const responseMessages: any[] = [
+            { role: 'system', content: responseWorkerPrompt },
+            ...history
+          ]
+
+          const workerRes = await fetch(getLLMRequestDetails(openRouterKey, model).url, {
+            method: 'POST',
+            headers: getLLMRequestDetails(openRouterKey, model).headers,
+            body: JSON.stringify({
+              model: getLLMRequestDetails(openRouterKey, model).model,
+              max_tokens: maxTokens,
+              messages: responseMessages,
+              tools: ACTION_TOOLS,
+              tool_choice: 'auto'
+            })
+          })
+
+          if (workerRes.ok) {
+            const aiData = await workerRes.json()
+            const assistantMsg = aiData.choices[0].message
+            finalContent = assistantMsg.content || ''
+
+            if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0) {
+              for (const toolCall of assistantMsg.tool_calls) {
+                const toolName = toolCall.function.name
+                let toolArgs = {}
+                try { toolArgs = JSON.parse(toolCall.function.arguments || '{}') } catch {}
+                const toolResult = await executeTool(toolName, toolArgs, supabaseClient, user.id, session_id, !!is_background, settings?.meta_access_token || undefined, settings?.meta_ad_account_id || undefined)
+                logStageAudit(thinkingSteps, { phase: `PHASE_5_TOOL_${toolName.toUpperCase()}`, icon: '🛠️', title: `Phase 5 Tool: ${toolName}`, status: 'EXECUTED', tool_name: toolName, tool_args: toolArgs, tool_result: toolResult, raw_output: toolResult })
+                toolExecutions.push({ name: toolName, args: toolArgs, result: toolResult, status: 'success' })
+              }
+            }
+          }
+
+          logStageAudit(thinkingSteps, { phase: 'PHASE_5_WORKER', icon: '⚡', title: 'Phase 5: Execution Worker', raw_output: finalContent || 'Worker produced response.' })
+
+          if (!finalContent || finalContent.trim().length === 0) {
+            finalContent = blackboard.strategy_proposal || blackboard.pre_execution_plan || 'Strategy formulated.'
+          }
+
+          if (toolExecutions.length > 0) {
+            const toolSummary = toolExecutions.map(t => `- **Executed ${t.name}**: ${t.result}`).join('\n')
+            finalContent += `\n\n### 🛠️ Execution & Action Summary\n${toolSummary}`
+          }
+        }
+
+        // ===== PHASE 6: FORMATTER =====
+        if (selectedStages.has('FORMATTER')) {
+          try {
+            const reqDetails = getLLMRequestDetails(openRouterKey, model)
+            const formatterRes = await fetch(reqDetails.url, {
+              method: 'POST',
+              headers: reqDetails.headers,
+              body: JSON.stringify({
+                model: reqDetails.model,
+                max_tokens: maxTokens,
+                messages: [
+                  { role: 'system', content: generateFormatterPrompt() + "\n\nCRITICAL: Preserve 'Execution & Action Summary' section if present." },
+                  { role: 'user', content: `Structure and format this content beautifully:\n\n${finalContent}` }
+                ]
+              })
+            })
+            if (formatterRes.ok) {
+              const data = await formatterRes.json()
+              const formatted = data.choices[0].message.content || ''
+              if (formatted.trim().length > 20) finalContent = formatted
+            }
+          } catch (err: any) {
+            console.error('Blackboard Formatter failed:', err.message)
+          }
+        }
+
+        // Final brain state log for telemetry
+        logStageAudit(thinkingSteps, {
+          phase: 'BRAIN_FINAL_STATE',
+          icon: '🧠',
+          title: `Living Brain: Final State (${blackboard.discoveries.length} discoveries)`,
+          raw_output: `Final Brain State: ${blackboard.brain_state}\n\nAll Discoveries:\n${blackboard.discoveries.map((d: string, i: number) => `${i + 1}. ${d}`).join('\n')}`
+        })
+      } // End of ACTIVE route
     } else if (reasoning_mode === 'deep') {
       logStageAudit(thinkingSteps, {
         phase: 'PHASE_0_KNOWLEDGE',

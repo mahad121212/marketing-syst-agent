@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Sparkles, CheckCircle2, AlertCircle, Wrench, ChevronDown, ChevronRight, Play, Plus, MessageSquare, Trash2, Clock, Target, X, Calendar, Eye, Terminal } from 'lucide-react';
+import { Send, Bot, User, Sparkles, CheckCircle2, AlertCircle, Wrench, ChevronDown, ChevronRight, Play, Plus, MessageSquare, Trash2, Clock, Target, X, Calendar, Eye, Terminal, Brain } from 'lucide-react';
 import { AgentMessage } from '../types';
 import { supabase } from '../lib/supabase';
 import { FormattedMarkdown } from './FormattedMarkdown';
 
-const LiveProcessLoader: React.FC<{ reasoningMode: 'fast' | 'deep' | 'emergent' }> = ({ reasoningMode }) => {
+const LiveProcessLoader: React.FC<{ reasoningMode: 'fast' | 'deep' | 'emergent' | 'blackboard' }> = ({ reasoningMode }) => {
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
 
   const deepSteps = [
@@ -37,7 +37,14 @@ const LiveProcessLoader: React.FC<{ reasoningMode: 'fast' | 'deep' | 'emergent' 
     { title: '⚡ Synthesizing response', desc: 'Combining agent outputs into your final answer...' },
   ];
 
-  const steps = reasoningMode === 'deep' ? deepSteps : reasoningMode === 'emergent' ? emergentSteps : fastSteps;
+  const blackboardSteps = [
+    { title: '🧠 Living Brain Initializing', desc: 'Activating living blackboard memory and assessing holistic request...' },
+    { title: '👂 Brain Sensory Feedback Loop', desc: 'Listening to specialist discoveries and evolving context in real-time...' },
+    { title: '🔄 Blackboard Context Accumulation', desc: 'Cross-injecting newly discovered insights across specialized stages...' },
+    { title: '⚡ Holistic Outcome Synthesis', desc: 'Synthesizing living memory into comprehensive execution output...' },
+  ];
+
+  const steps = reasoningMode === 'deep' ? deepSteps : reasoningMode === 'emergent' ? emergentSteps : reasoningMode === 'blackboard' ? blackboardSteps : fastSteps;
 
   useEffect(() => {
     setCurrentStepIndex(0);
@@ -46,7 +53,7 @@ const LiveProcessLoader: React.FC<{ reasoningMode: 'fast' | 'deep' | 'emergent' 
   useEffect(() => {
     const interval = setInterval(() => {
       setCurrentStepIndex((prev) => (prev < steps.length - 1 ? prev + 1 : prev));
-    }, reasoningMode === 'deep' ? 3000 : reasoningMode === 'emergent' ? 2500 : 2000);
+    }, reasoningMode === 'deep' ? 3000 : (reasoningMode === 'emergent' || reasoningMode === 'blackboard') ? 2500 : 2000);
     return () => clearInterval(interval);
   }, [steps.length, reasoningMode]);
 
@@ -82,7 +89,7 @@ const LiveProcessLoader: React.FC<{ reasoningMode: 'fast' | 'deep' | 'emergent' 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <div style={{ width: '16px', height: '16px', borderRadius: '50%', border: '2px solid rgba(6, 182, 212, 0.2)', borderTopColor: '#06b6d4', animation: 'spin-loader 1s linear infinite' }} />
             <span style={{ fontSize: '13px', color: '#38bdf8', fontWeight: 600 }}>
-              {reasoningMode === 'deep' ? 'Deep Reasoning Pipeline Active (12 Stages)' : reasoningMode === 'emergent' ? 'Emergent Thinking — AI Deciding Workflow...' : 'Fast Mode Agent active...'}
+              {reasoningMode === 'deep' ? 'Deep Reasoning Pipeline Active (12 Stages)' : reasoningMode === 'emergent' ? 'Emergent Thinking — AI Deciding Workflow...' : reasoningMode === 'blackboard' ? 'Living Blackboard Brain — Continuous Sensory Feedback...' : 'Fast Mode Agent active...'}
             </span>
           </div>
 
@@ -152,8 +159,8 @@ interface AgentChatProps {
   onNewChat: () => void;
   onSwitchSession: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
-  reasoningMode: 'fast' | 'deep' | 'emergent';
-  setReasoningMode: React.Dispatch<React.SetStateAction<'fast' | 'deep' | 'emergent'>>;
+  reasoningMode: 'fast' | 'deep' | 'emergent' | 'blackboard';
+  setReasoningMode: React.Dispatch<React.SetStateAction<'fast' | 'deep' | 'emergent' | 'blackboard'>>;
 }
 
 export const AgentChat: React.FC<AgentChatProps> = ({
@@ -1218,6 +1225,27 @@ export const AgentChat: React.FC<AgentChatProps> = ({
               </button>
               <button
                 type="button"
+                onClick={() => setReasoningMode('blackboard')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '5px 12px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  backgroundColor: reasoningMode === 'blackboard' ? 'rgba(236, 72, 153, 0.15)' : 'transparent',
+                  color: reasoningMode === 'blackboard' ? '#f472b6' : 'rgba(255, 255, 255, 0.4)',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                }}
+              >
+                <Brain style={{ width: '12px', height: '12px', opacity: reasoningMode === 'blackboard' ? 1 : 0.6 }} />
+                <span>Blackboard</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => setReasoningMode('deep')}
                 style={{
                   display: 'flex',
@@ -1254,6 +1282,23 @@ export const AgentChat: React.FC<AgentChatProps> = ({
               }}>
                 <Target style={{ width: '11px', height: '11px' }} />
                 AI dynamically decides reasoning depth
+              </span>
+            )}
+            {reasoningMode === 'blackboard' && (
+              <span style={{
+                fontSize: '11px',
+                color: '#f472b6',
+                backgroundColor: 'rgba(236, 72, 153, 0.08)',
+                border: '1px solid rgba(236, 72, 153, 0.2)',
+                padding: '3px 8px',
+                borderRadius: '6px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                marginLeft: '8px',
+              }}>
+                <Brain style={{ width: '11px', height: '11px' }} />
+                Living Brain — Continuous Sensory Feedback & Shared Memory
               </span>
             )}
             {reasoningMode === 'deep' && (
